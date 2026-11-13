@@ -1,46 +1,19 @@
-
 import { NextRequest, NextResponse } from "next/server";
-import { gemini, GEMINI_MODEL } from "@/lib/gemini";
-
-const MAX_ATTEMPTS = 3;
-
-const delay = (ms: number) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+import {
+  gemini,
+  GEMINI_MODEL,
+  getGeminiErrorStatus,
+  isRetryableGeminiError,
+  withGeminiRetry,
+} from "@/lib/gemini";
 
 async function generateWithRetry(message: string) {
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      return await gemini.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: message,
-      });
-    } catch (error: unknown) {
-      const status =
-        typeof error === "object" &&
-        error !== null &&
-        "status" in error
-          ? Number(error.status)
-          : undefined;
-
-      const retryable = [429, 500, 502, 503, 504].includes(
-        status ?? 0
-      );
-
-      if (!retryable || attempt === MAX_ATTEMPTS) {
-        throw error;
-      }
-
-      const waitTime = 1000 * Math.pow(2, attempt - 1);
-
-      console.log(
-        `Gemini error ${status}. Retry ${attempt + 1}/${MAX_ATTEMPTS} in ${waitTime}ms`
-      );
-
-      await delay(waitTime);
-    }
-  }
-
-  throw new Error("Gemini request failed.");
+  return withGeminiRetry(() =>
+    gemini.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: message,
+    })
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -72,16 +45,8 @@ export async function POST(request: NextRequest) {
   } catch (error: unknown) {
     console.error("Gemini API error:", error);
 
-    const status =
-      typeof error === "object" &&
-      error !== null &&
-      "status" in error
-        ? Number(error.status)
-        : undefined;
-
-    const isTemporary = [429, 500, 502, 503, 504].includes(
-      status ?? 0
-    );
+    const status = getGeminiErrorStatus(error);
+    const isTemporary = isRetryableGeminiError(error);
 
     return NextResponse.json(
       {
