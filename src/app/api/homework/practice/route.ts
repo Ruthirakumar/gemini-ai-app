@@ -39,11 +39,14 @@ function leaksAnswer(text: string | null, payload: PracticeTokenPayload): boolea
 
 /** Fallback hints if Gemini is unavailable, getting more concrete each attempt. */
 function fallbackHint(payload: PracticeTokenPayload, attempt: number): string {
-  if (attempt <= 1) return payload.hint;
+  const baseHint = leaksAnswer(payload.hint, payload)
+    ? "Read the question slowly and think about what it is asking you to do."
+    : payload.hint;
+  if (attempt <= 1) return baseHint;
   const firstStep = payload.solutionSteps[0];
   return firstStep && !leaksAnswer(firstStep, payload)
     ? `Let's start together: ${firstStep}`
-    : `${payload.hint} Take it one small step at a time.`;
+    : `${baseHint} Take it one small step at a time.`;
 }
 
 async function judgeWithGemini(
@@ -101,7 +104,7 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) {
       throw new HomeworkError(400, "bad_request", "Please type an answer before checking.");
     }
-    const { token, answer: rawAnswer, attempt, reveal } = parsed.data;
+    const { token, answer: rawAnswer, attempt, reveal, hint: wantsHint } = parsed.data;
 
     const payload = openPracticeToken(token);
     if (!payload) {
@@ -110,6 +113,19 @@ export async function POST(request: NextRequest) {
         "practice_expired",
         "This practice question has expired. Please check your homework again to get a fresh one."
       );
+    }
+
+    if (wantsHint) {
+      // `attempt` = number of hints already shown + 1, so hints get more concrete.
+      return NextResponse.json<PracticeResponse>({
+        success: true,
+        outcome: "hint",
+        feedback: "Here's a little help.",
+        hint: fallbackHint(payload, attempt),
+        correctAnswer: null,
+        solutionSteps: [],
+        attemptsLeft: MAX_PRACTICE_ATTEMPTS,
+      });
     }
 
     if (reveal) {
@@ -126,6 +142,7 @@ export async function POST(request: NextRequest) {
     // 1. Deterministic check first (fast, no AI call, can't be fooled).
     const deterministic = compareAnswers(answer, payload.expectedAnswer, payload.acceptableAnswers, {
       numeric: payload.answerType === "number",
+      exactText: payload.answerType === "text",
     });
 
     let isCorrect: boolean;

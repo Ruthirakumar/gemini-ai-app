@@ -117,20 +117,36 @@ function numbersEqual(a: ParsedNumber, b: ParsedNumber): boolean | null {
   return Math.abs(a.value - b.value) < 1e-9;
 }
 
+/** Whitespace/quote normalisation only: keeps case and punctuation. */
+const exactForm = (value: string) =>
+  value.normalize("NFKC").replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim();
+
 /**
  * Compares a student answer with expected answers.
  * @param strictForm when true (e.g. "write 3/4 as a decimal") a numerically equal
  *   answer in a different form (fraction vs decimal) is left to Gemini.
+ * @param exactText when true, a text match must keep case and punctuation
+ *   (questions may test capital letters or punctuation); near-matches are
+ *   left to Gemini, which knows what the question tests.
  */
 export function compareAnswers(
   student: string,
   expected: string,
   acceptable: string[] = [],
-  { numeric = false, strictForm = true }: { numeric?: boolean; strictForm?: boolean } = {}
+  {
+    numeric = false,
+    strictForm = true,
+    exactText = false,
+  }: { numeric?: boolean; strictForm?: boolean; exactText?: boolean } = {}
 ): CompareResult {
   const candidates = [expected, ...acceptable].filter((c) => c.trim().length > 0);
   const studentText = normaliseText(student);
   if (!studentText) return "unknown";
+
+  if (exactText && !numeric) {
+    const studentExact = exactForm(student);
+    return candidates.some((c) => exactForm(c) === studentExact) ? "match" : "unknown";
+  }
 
   if (candidates.some((c) => normaliseText(c) === studentText)) return "match";
 

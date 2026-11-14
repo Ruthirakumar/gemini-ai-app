@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPartFromBase64, createUserContent } from "@google/genai";
+import { createUserContent } from "@google/genai";
 import { gemini, GEMINI_HOMEWORK_MODEL, withGeminiRetry } from "@/lib/gemini";
 import { SUBJECT_OPTIONS, SubjectOption } from "@/lib/homework/constants";
 import { HomeworkError, toErrorResponse } from "@/lib/homework/errors";
-import { validateUploadedImages, ValidatedImage } from "@/lib/homework/image";
+import { toGeminiPart, validateUploadedImages, ValidatedImage } from "@/lib/homework/image";
 import { buildCheckUserPrompt, HOMEWORK_SYSTEM_PROMPT } from "@/lib/homework/prompts";
 import type { HomeworkCheckResponse } from "@/lib/homework/types";
 import {
@@ -19,13 +19,25 @@ export const maxDuration = 180;
 
 const GEMINI_TIMEOUT_MS = 90_000;
 
+/** Total pages across files; a PDF of unknown length counts generously. */
+function countPages(images: ValidatedImage[]): number {
+  return images.reduce((sum, file) => sum + (file.pages ?? 20), 0);
+}
+
 async function askGemini(images: ValidatedImage[], subject: SubjectOption) {
+  const fileParts = await Promise.all(images.map(toGeminiPart));
+  let nextPage = 1;
   const parts = [
-    { text: buildCheckUserPrompt(subject, images.length) },
-    ...images.flatMap((image, i) => [
-      { text: `Page ${i + 1}:` },
-      createPartFromBase64(image.base64, image.mimeType),
-    ]),
+    { text: buildCheckUserPrompt(subject, countPages(images)) },
+    ...images.flatMap((image, i) => {
+      const first = nextPage;
+      nextPage += image.pages ?? 1;
+      const label =
+        image.mimeType === "application/pdf"
+          ? `PDF document starting at Page ${first} (number its pages ${first}, ${first + 1}, ...):`
+          : `Page ${first}:`;
+      return [{ text: label }, fileParts[i]];
+    }),
   ];
 
   const response = await withGeminiRetry(
@@ -86,7 +98,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const result = buildHomeworkResult(validated.data, images.length);
+    const result = buildHomeworkResult(validated.data, countPages(images));
     assertHasQuestions(result, validated.data.isHomework);
 
     // Log only non-sensitive metadata (no images, questions or answers).

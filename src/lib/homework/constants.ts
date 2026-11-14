@@ -6,8 +6,15 @@ export type SubjectOption = (typeof SUBJECT_OPTIONS)[number];
 export const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 export type AllowedImageType = (typeof ALLOWED_IMAGE_TYPES)[number];
 
+/** Worksheets may be photos or a PDF (Gemini reads PDFs natively). */
+export const ALLOWED_UPLOAD_TYPES = [...ALLOWED_IMAGE_TYPES, "application/pdf"] as const;
+export type AllowedUploadType = (typeof ALLOWED_UPLOAD_TYPES)[number];
+
 export const ACCEPT_ATTRIBUTE =
-  ".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp";
+  ".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf";
+
+/** Homework library uploads go straight to Supabase Storage, so they can be larger. */
+export const MAX_LIBRARY_FILE_BYTES = 20 * 1024 * 1024;
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB per image
 export const MAX_IMAGES = 3;
@@ -24,15 +31,15 @@ export function formatBytes(bytes: number): string {
 }
 
 /** Client-side pre-check. The server repeats this validation (and checks file contents). */
-export function describeImageProblem(file: File): string | null {
-  if (!(ALLOWED_IMAGE_TYPES as readonly string[]).includes(file.type)) {
-    return `"${file.name}" isn't a supported picture. Please use a JPG, PNG or WebP image.`;
+export function describeImageProblem(file: File, maxBytes = MAX_IMAGE_BYTES): string | null {
+  if (!(ALLOWED_UPLOAD_TYPES as readonly string[]).includes(file.type)) {
+    return `"${file.name}" isn't a supported file. Please use a PDF, JPG, PNG or WebP.`;
   }
   if (file.size === 0) {
-    return `"${file.name}" looks empty. Please choose another picture.`;
+    return `"${file.name}" looks empty. Please choose another file.`;
   }
-  if (file.size > MAX_IMAGE_BYTES) {
-    return `"${file.name}" is ${formatBytes(file.size)}. Pictures must be ${formatBytes(MAX_IMAGE_BYTES)} or smaller.`;
+  if (file.size > maxBytes) {
+    return `"${file.name}" is ${formatBytes(file.size)}. Files must be ${formatBytes(maxBytes)} or smaller.`;
   }
   return null;
 }

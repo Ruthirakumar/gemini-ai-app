@@ -145,9 +145,11 @@ export const practiceRequestSchema = z.object({
   answer: z.string().max(300).optional().default(""),
   attempt: z.number().int().min(1).max(10),
   reveal: z.boolean().optional().default(false),
+  /** Ask for a hint without using up an attempt. */
+  hint: z.boolean().optional().default(false),
 });
 
-export type PracticeOutcome = "correct" | "try_again" | "revealed";
+export type PracticeOutcome = "correct" | "try_again" | "revealed" | "hint";
 
 export interface PracticeResponse {
   success: true;

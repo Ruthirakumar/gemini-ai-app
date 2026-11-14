@@ -24,8 +24,9 @@ export default function PracticeQuestion({ practice, onFinished }: Props) {
   const finished = phase === "correct" || phase === "revealed";
   const busy = phase === "checking";
 
-  async function send(reveal: boolean) {
-    const attempt = reveal ? Math.max(1, attempts) : attempts + 1;
+  async function send(reveal: boolean, hint = false) {
+    const previousPhase = phase;
+    const attempt = hint ? hints.length + 1 : reveal ? Math.max(1, attempts) : attempts + 1;
     setPhase("checking");
     setError(null);
 
@@ -33,10 +34,16 @@ export default function PracticeQuestion({ practice, onFinished }: Props) {
       const res = await fetch("/api/homework/practice", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: practice.token, answer: reveal ? "" : answer, attempt, reveal }),
+        body: JSON.stringify({ token: practice.token, answer: reveal || hint ? "" : answer, attempt, reveal, hint }),
       });
       const data = (await res.json()) as PracticeResponse | ApiErrorResponse;
       if (!data.success) throw new Error(data.error);
+
+      if (data.outcome === "hint") {
+        if (data.hint) setHints((prev) => (prev.includes(data.hint!) ? prev : [...prev, data.hint!]));
+        setPhase(previousPhase);
+        return;
+      }
 
       if (!reveal) setAttempts(attempt);
       setFeedback(data.feedback);
@@ -146,14 +153,29 @@ export default function PracticeQuestion({ practice, onFinished }: Props) {
         )}
       </div>
 
-      {phase === "try_again" && (
-        <button
-          type="button"
-          onClick={() => void send(true)}
-          className="mt-3 text-sm font-semibold text-indigo-700 underline-offset-2 hover:underline"
-        >
-          Show me the answer
-        </button>
+      {!finished && (
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
+          {hints.length < 2 && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void send(false, true)}
+              className="text-sm font-semibold text-amber-800 underline-offset-2 hover:underline disabled:opacity-50"
+            >
+              💡 {hints.length === 0 ? "Get a hint" : "Another hint"}
+            </button>
+          )}
+          {phase === "try_again" && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void send(true)}
+              className="text-sm font-semibold text-indigo-700 underline-offset-2 hover:underline disabled:opacity-50"
+            >
+              Show me the answer
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

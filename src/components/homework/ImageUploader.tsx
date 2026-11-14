@@ -120,7 +120,7 @@ export default function ImageUploader({ images, onAdd, onRemove, onReplace, disa
             {images.length === 0 ? "Drag and drop your worksheet photo here" : "Add another page (optional)"}
           </p>
           <p className="mt-1 text-sm text-slate-500">
-            JPG, PNG or WebP · up to {formatBytes(MAX_IMAGE_BYTES)} each · up to {MAX_IMAGES} pages
+            PDF, JPG, PNG or WebP · up to {formatBytes(MAX_IMAGE_BYTES)} each · up to {MAX_IMAGES} files
           </p>
           <div className="mt-4 flex flex-wrap justify-center gap-2">
             <button
@@ -148,11 +148,18 @@ export default function ImageUploader({ images, onAdd, onRemove, onReplace, disa
           {images.map((image, index) => (
             <li key={image.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className={`relative bg-slate-100 ${images.length === 1 ? "h-72 sm:h-96" : "h-40 sm:h-48"}`}>
-                <img
-                  src={image.previewUrl}
-                  alt={`Homework page ${index + 1} preview`}
-                  className="h-full w-full object-contain"
-                />
+                {image.file.type === "application/pdf" ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-600">
+                    <span aria-hidden className="text-4xl">📄</span>
+                    <span className="text-sm font-semibold">PDF document</span>
+                  </div>
+                ) : (
+                  <img
+                    src={image.previewUrl}
+                    alt={`Homework page ${index + 1} preview`}
+                    className="h-full w-full object-contain"
+                  />
+                )}
                 {images.length > 1 && (
                   <span className="absolute left-2 top-2 rounded-lg bg-slate-900/75 px-2 py-0.5 text-xs font-semibold text-white">
                     Page {index + 1}
