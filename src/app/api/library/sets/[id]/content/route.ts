@@ -1,17 +1,18 @@
 import { NextRequest } from "next/server";
 import { assertUuid, ok, readJson, route } from "@/lib/api";
 import { HomeworkError } from "@/lib/homework/errors";
-import { getOwnedSet, getSetDetailForOwner, saveSetContent } from "@/lib/library/repository";
+import { getEditableSet, getSetDetailForEditor, saveSetContent } from "@/lib/library/repository";
 import { editorContentSchema } from "@/lib/library/types";
-import { requireUser } from "@/lib/supabase/server";
+import { requireViewer } from "@/lib/supabase/server";
 
 /** PUT – saves the reviewed sections and questions (atomic). */
 export const PUT = route(
   "library/content",
   async (request: NextRequest, ctx: RouteContext<"/api/library/sets/[id]/content">) => {
     const id = assertUuid((await ctx.params).id, "homework");
-    const { supabase, userId } = await requireUser();
-    const set = await getOwnedSet(supabase, id);
+    const { supabase, userId, isAdmin } = await requireViewer();
+    const viewer = { userId, isAdmin };
+    const set = await getEditableSet(supabase, viewer, id);
     const { sections } = await readJson(request, editorContentSchema);
 
     // Question numbers must be unique within each section.
@@ -35,6 +36,10 @@ export const PUT = route(
           ...q.questionData,
           options: q.questionType === "multiple_choice" ? q.questionData.options.filter((o) => o.trim()) : [],
           reviewReason: q.needsReview ? q.questionData.reviewReason : null,
+          // A picture may only point into this homework's own figures folder.
+          figurePath: q.questionData.figurePath?.startsWith(`${set.created_by}/${id}/figures/`) && !q.questionData.figurePath.includes("..")
+            ? q.questionData.figurePath
+            : null,
         },
       })),
     }));
@@ -44,7 +49,7 @@ export const PUT = route(
     }
 
     await saveSetContent(userId, id, normalised);
-    const detail = await getSetDetailForOwner(supabase, id);
+    const detail = await getSetDetailForEditor(supabase, viewer, id);
     return ok({ set: detail });
   }
 );

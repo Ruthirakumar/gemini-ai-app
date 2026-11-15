@@ -41,7 +41,7 @@ export const POST = route(
     }
 
     const admin = createSupabaseAdminClient();
-    const questions = await loadMarkableQuestions(admin, attempt.homework_set_id);
+    const questions = await loadMarkableQuestions(admin, attempt.homework_set_id, attempt.section_id);
     const question = questions.find((q) => q.id === questionId);
     if (!question || question.type === "not_digital") {
       throw new HomeworkError(404, "not_found", "That question couldn't be found.");

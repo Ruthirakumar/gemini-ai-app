@@ -65,7 +65,7 @@ function ExtractionProgress({ stage }: { stage: Stage }) {
   );
 }
 
-export default function UploadHomework() {
+export default function UploadHomework({ shared = false }: { shared?: boolean }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [title, setTitle] = useState("");
@@ -73,6 +73,7 @@ export default function UploadHomework() {
   const [weekNumber, setWeekNumber] = useState(1);
   const [subject, setSubject] = useState<SetSubject>("Both");
   const [homeworkDate, setHomeworkDate] = useState("");
+  const [topic, setTopic] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [stage, setStage] = useState<Stage>("form");
@@ -105,7 +106,9 @@ export default function UploadHomework() {
     try {
       const created = await fetchJson<{ set: HomeworkSetSummary; uploadFolder: string }>("/api/library/sets", {
         method: "POST",
-        json: { title, schoolYear, weekNumber, subject, homeworkDate: homeworkDate || null },
+        json: shared
+          ? { title, schoolYear, subject, visibility: "shared", topic, homeworkDate: null }
+          : { title, schoolYear, weekNumber, subject, homeworkDate: homeworkDate || null, visibility: "private" },
       });
       setId = created.set.id;
 
@@ -137,9 +140,13 @@ export default function UploadHomework() {
   return (
     <>
       <PageHeader
-        eyebrow="Homework Library"
-        title="Upload weekly homework"
-        description="Homework Buddy will read the sheet and turn it into questions you can check before publishing."
+        eyebrow={shared ? "Shared library" : "Homework Library"}
+        title={shared ? "Add a shared practice set" : "Upload weekly homework"}
+        description={
+          shared
+            ? "Upload a worksheet for a year and topic. After you publish it, every family's children can practise it."
+            : "Homework Buddy will read the sheet and turn it into questions you can check before publishing."
+        }
       />
       <Card>
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -201,13 +208,19 @@ export default function UploadHomework() {
                 ))}
               </select>
             </Field>
-            <Field label="Week">
-              <select value={weekNumber} onChange={(e) => setWeekNumber(Number(e.target.value))} className={inputClass}>
-                {WEEKS.map((w) => (
-                  <option key={w} value={w}>Week {w}</option>
-                ))}
-              </select>
-            </Field>
+            {shared ? (
+              <Field label="Topic" hint="e.g. Fractions, Times tables, Synonyms, Comprehension">
+                <input required maxLength={100} value={topic} onChange={(e) => setTopic(e.target.value)} className={inputClass} />
+              </Field>
+            ) : (
+              <Field label="Week">
+                <select value={weekNumber} onChange={(e) => setWeekNumber(Number(e.target.value))} className={inputClass}>
+                  {WEEKS.map((w) => (
+                    <option key={w} value={w}>Week {w}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
             <Field label="Subject">
               <select value={subject} onChange={(e) => setSubject(e.target.value as SetSubject)} className={inputClass}>
                 <option value="Both">English and Maths</option>
@@ -215,15 +228,19 @@ export default function UploadHomework() {
                 <option value="Maths">Maths</option>
               </select>
             </Field>
-            <Field label="Homework date (optional)">
-              <input type="date" value={homeworkDate} onChange={(e) => setHomeworkDate(e.target.value)} className={inputClass} />
-            </Field>
+            {!shared && (
+              <Field label="Homework date (optional)">
+                <input type="date" value={homeworkDate} onChange={(e) => setHomeworkDate(e.target.value)} className={inputClass} />
+              </Field>
+            )}
           </div>
 
           {error && <ErrorBanner message={error} />}
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-slate-500">It will be saved as a <strong>draft</strong>. Children can&apos;t see it until you publish.</p>
+            <p className="text-sm text-slate-500">
+              It will be saved as a <strong>draft</strong>. {shared ? "No family can see it" : "Children can't see it"} until you publish.
+            </p>
             <Button type="submit" size="lg" disabled={!file}>
               Upload and extract questions
             </Button>

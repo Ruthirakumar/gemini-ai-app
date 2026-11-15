@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { HomeworkError } from "@/lib/homework/errors";
 import { dbError } from "@/lib/library/repository";
+import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import { signFigureUrls } from "@/lib/library/figureStorage";
 import {
   markingCriteriaSchema,
   questionDataSchema,
@@ -54,14 +56,16 @@ export interface AttemptRow {
   progress: unknown;
   started_at: string;
   submitted_at: string | null;
+  section_id: string | null;
 }
 
 const ATTEMPT_COLUMNS =
-  "id, student_id, homework_set_id, status, score, total_marks, percentage, progress, started_at, submitted_at";
+  "id, student_id, homework_set_id, section_id, status, score, total_marks, percentage, progress, started_at, submitted_at";
 
 export const toAttemptSummary = (row: AttemptRow): AttemptSummary => ({
   id: row.id,
   homeworkSetId: row.homework_set_id,
+  sectionId: row.section_id,
   status: row.status,
   score: row.score,
   totalMarks: row.total_marks,
@@ -99,7 +103,7 @@ export async function getAttemptView(supabase: SupabaseClient, attemptId: string
 
   const { data: set, error: setError } = await supabase
     .from("homework_sets")
-    .select("id, title, school_year, week_number, subject, original_file_path")
+    .select("id, title, school_year, week_number, topic, visibility, subject, original_file_path")
     .eq("id", attempt.homework_set_id)
     .maybeSingle();
   if (setError) dbError("attemptSet", setError);
@@ -114,6 +118,8 @@ export async function getAttemptView(supabase: SupabaseClient, attemptId: string
     .order("display_order", { ascending: true })
     .order("display_order", { referencedTable: "questions", ascending: true });
   if (sectionsError) dbError("attemptSections", sectionsError);
+  // A section retake only contains that section.
+  const scopedSections = ((sections ?? []) as { id: string }[]).filter((s) => !attempt.section_id || s.id === attempt.section_id);
 
   type SectionRow = {
     id: string;
@@ -130,13 +136,13 @@ export async function getAttemptView(supabase: SupabaseClient, attemptId: string
     }[];
   };
 
-  const practiceSections: PracticeSectionView[] = ((sections ?? []) as SectionRow[]).map((s) => ({
+  const practiceSections: PracticeSectionView[] = (scopedSections as SectionRow[]).map((s) => ({
     id: s.id,
     subject: s.subject,
     sectionTitle: s.section_title,
     instructions: s.instructions,
     questions: s.questions.map((q) => {
-      const { reviewReason: _hidden, ...data } = questionDataSchema.parse(q.question_data ?? {});
+      const { reviewReason: _hidden, figurePath, ...data } = questionDataSchema.parse(q.question_data ?? {});
       void _hidden;
       return {
         id: q.id,
@@ -145,9 +151,21 @@ export async function getAttemptView(supabase: SupabaseClient, attemptId: string
         questionType: q.question_type,
         marks: q.marks,
         data,
+        figureUrl: figurePath, // replaced with a signed URL below
       };
     }),
   }));
+
+  // Swap storage paths for short-lived signed URLs (bucket is private).
+  // Shared sets' pictures live in an admin's folder; the set is visible to this
+  // user (checked above via RLS), so sign with the service role.
+  const figureUrls = await signFigureUrls(
+    createSupabaseAdminClient(),
+    practiceSections.flatMap((s) => s.questions.map((q) => q.figureUrl))
+  );
+  for (const section of practiceSections) {
+    for (const q of section.questions) q.figureUrl = q.figureUrl ? figureUrls[q.figureUrl] ?? null : null;
+  }
 
   const { data: answerRows, error: answersError } = await supabase
     .from("student_answers")
@@ -214,9 +232,15 @@ export async function getAttemptView(supabase: SupabaseClient, attemptId: string
       title: set.title,
       schoolYear: set.school_year,
       weekNumber: set.week_number,
+      topic: set.topic,
+      visibility: set.visibility,
       subject: set.subject as SetSubject,
       hasFile: Boolean(set.original_file_path),
     },
+    scope: attempt.section_id
+      ? { sectionId: attempt.section_id, sectionTitle: practiceSections[0]?.sectionTitle ?? "Section" }
+      : null,
+    homeworkSections: ((sections ?? []) as { id: string; section_title: string }[]).map((s) => ({ id: s.id, title: s.section_title })),
     sections: practiceSections,
     answers,
     checks,
@@ -229,13 +253,15 @@ export async function getAttemptView(supabase: SupabaseClient, attemptId: string
 }
 
 /** Server-only: questions WITH answer keys. Caller must already have verified ownership. */
-export async function loadMarkableQuestions(admin: SupabaseClient, setId: string): Promise<MarkableQuestion[]> {
-  const { data, error } = await admin
+export async function loadMarkableQuestions(admin: SupabaseClient, setId: string, sectionId: string | null = null): Promise<MarkableQuestion[]> {
+  let query = admin
     .from("homework_sections")
     .select(
-      "subject, display_order, questions(id, question_number, question_text, question_type, question_data, marking_criteria, marks, display_order)"
+      "id, subject, display_order, questions(id, question_number, question_text, question_type, question_data, marking_criteria, marks, display_order)"
     )
-    .eq("homework_set_id", setId)
+    .eq("homework_set_id", setId);
+  if (sectionId) query = query.eq("id", sectionId);
+  const { data, error } = await query
     .order("display_order", { ascending: true })
     .order("display_order", { referencedTable: "questions", ascending: true });
   if (error) dbError("markableQuestions", error);

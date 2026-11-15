@@ -5,9 +5,10 @@ import { MAX_LIBRARY_FILE_BYTES } from "@/lib/homework/constants";
 import { HomeworkError } from "@/lib/homework/errors";
 import { validateWorksheetBuffer } from "@/lib/homework/image";
 import { extractHomework } from "@/lib/library/extraction";
-import { dbError, getOwnedSet, getSetDetailForOwner, saveSetContent } from "@/lib/library/repository";
+import { attachFigures, removeFigures } from "@/lib/library/figureStorage";
+import { dbError, getEditableSet, getSetDetailForEditor, saveSetContent } from "@/lib/library/repository";
 import { WORKSHEET_BUCKET } from "@/lib/supabase/config";
-import { requireUser } from "@/lib/supabase/server";
+import { createSupabaseAdminClient, requireViewer } from "@/lib/supabase/server";
 
 // Long PDFs are extracted in parallel chunks; allow time for the slowest chunk.
 export const maxDuration = 300;
@@ -24,9 +25,12 @@ export const POST = route(
   "library/extract",
   async (request: NextRequest, ctx: RouteContext<"/api/library/sets/[id]/extract">) => {
     const id = assertUuid((await ctx.params).id, "homework");
-    const { supabase, userId } = await requireUser();
+    const { supabase, userId, isAdmin } = await requireViewer();
+    const viewer = { userId, isAdmin };
     const body = await readJson(request, bodySchema);
-    const set = await getOwnedSet(supabase, id);
+    const set = await getEditableSet(supabase, viewer, id);
+    // Files live in the creator's folder; access was just checked, so use the service role for storage.
+    const storage = createSupabaseAdminClient();
 
     if (set.status === "published") {
       throw new HomeworkError(409, "published", "Unpublish this homework before extracting the questions again.");
@@ -37,7 +41,7 @@ export const POST = route(
     ) {
       throw new HomeworkError(409, "busy", "Questions are already being extracted for this homework. Please wait.");
     }
-    const { count: attempts } = await supabase
+    const { count: attempts } = await storage
       .from("homework_attempts")
       .select("id", { count: "exact", head: true })
       .eq("homework_set_id", id);
@@ -48,12 +52,12 @@ export const POST = route(
     // The file must be inside this user's folder for this set.
     const filePath = body.filePath ?? set.original_file_path;
     if (!filePath) throw new HomeworkError(400, "no_file", "Please upload the homework file first.");
-    const expectedPrefix = `${userId}/${id}/`;
+    const expectedPrefix = `${set.created_by}/${id}/`;
     if (!filePath.startsWith(expectedPrefix) || filePath.includes("..")) {
       throw new HomeworkError(403, "bad_path", "That file can't be used for this homework.");
     }
 
-    const { data: blob, error: downloadError } = await supabase.storage.from(WORKSHEET_BUCKET).download(filePath);
+    const { data: blob, error: downloadError } = await storage.storage.from(WORKSHEET_BUCKET).download(filePath);
     if (downloadError || !blob) throw new HomeworkError(404, "no_file", "The uploaded file couldn't be found. Please upload it again.");
 
     let file;
@@ -64,7 +68,7 @@ export const POST = route(
       });
     } catch (error) {
       // Don't keep files that failed content validation.
-      await supabase.storage.from(WORKSHEET_BUCKET).remove([filePath]);
+      await storage.storage.from(WORKSHEET_BUCKET).remove([filePath]);
       throw error;
     }
 
@@ -83,11 +87,14 @@ export const POST = route(
     const startedAt = Date.now();
     try {
       const result = await extractHomework(file, set.subject);
+      // Crop the pictures questions need and show them next to each question.
+      await removeFigures(storage, set.created_by, id);
+      const figures = await attachFigures(storage, set.created_by, id, file, result.sections, result.figures);
       await saveSetContent(userId, id, result.sections);
       await supabase.from("homework_sets").update({ extraction_status: "completed" }).eq("id", id);
 
-      console.log("[library/extract] ok", { ...result.stats, bytes: file.bytes, ms: Date.now() - startedAt });
-      const detail = await getSetDetailForOwner(supabase, id);
+      console.log("[library/extract] ok", { ...result.stats, figuresSaved: figures, bytes: file.bytes, ms: Date.now() - startedAt });
+      const detail = await getSetDetailForEditor(supabase, viewer, id);
       return ok({ set: detail, suggestedTitle: result.suggestedTitle });
     } catch (error) {
       const message =

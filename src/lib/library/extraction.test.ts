@@ -16,6 +16,7 @@ const q = (questionNumber: string, page: number, parentNumber: string | null = n
   selectCount: 1,
   unit: null,
   visualReference: null,
+  figureBox: null,
   marks: 1,
   expectedAnswer: "x",
   acceptableAnswers: [],

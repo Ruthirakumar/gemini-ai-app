@@ -56,6 +56,23 @@ export interface AuthContext {
   userId: string;
 }
 
+/** Whether the signed-in user is listed in public.app_admins. */
+export async function isAdminUser(supabase: SupabaseClient): Promise<boolean> {
+  const { data, error } = await supabase.rpc("is_admin");
+  if (error) {
+    // Before the shared-library migration is run the function doesn't exist: nobody is an admin.
+    console.warn("[auth] is_admin check failed", { code: error.code });
+    return false;
+  }
+  return data === true;
+}
+
+/** Authenticates and also tells whether the user is an admin. */
+export async function requireViewer(): Promise<AuthContext & { isAdmin: boolean }> {
+  const ctx = await requireUser();
+  return { ...ctx, isAdmin: await isAdminUser(ctx.supabase) };
+}
+
 /** Authenticates the request. Throws a friendly 401 if not signed in. */
 export async function requireUser(): Promise<AuthContext> {
   const supabase = await createSupabaseServerClient();

@@ -13,7 +13,10 @@ export function StatusPill({ status }: { status: HomeworkSetSummary["status"] })
   return <Pill tone="amber">✎ Draft</Pill>;
 }
 
-export default function LibraryList() {
+export default function LibraryList({ initialScope = "mine" }: { initialScope?: "mine" | "shared" }) {
+  const [scope, setScope] = useState<"mine" | "shared">(initialScope);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [topic, setTopic] = useState("");
   const [year, setYear] = useState("");
   const [week, setWeek] = useState("");
   const [search, setSearch] = useState("");
@@ -29,12 +32,16 @@ export default function LibraryList() {
   }, [search]);
 
   const fetchSets = useCallback(() => {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ scope });
     if (year) params.set("year", year);
-    if (week) params.set("week", week);
+    if (week && scope === "mine") params.set("week", week);
+    if (topic && scope === "shared") params.set("topic", topic);
     if (debouncedSearch) params.set("search", debouncedSearch);
-    return fetchJson<{ sets: HomeworkSetSummary[] }>(`/api/library/sets?${params}`).then((d) => d.sets);
-  }, [year, week, debouncedSearch]);
+    return fetchJson<{ sets: HomeworkSetSummary[]; isAdmin: boolean }>(`/api/library/sets?${params}`).then((d) => {
+      setIsAdmin(d.isAdmin);
+      return d.sets;
+    });
+  }, [scope, year, week, topic, debouncedSearch]);
 
   const load = useCallback(async () => {
     try {
@@ -88,21 +95,53 @@ export default function LibraryList() {
     }
   }
 
+  const shared = scope === "shared";
+  const topics = [...new Set((sets ?? []).map((x) => x.topic).filter((t): t is string => Boolean(t)))].sort();
+
   return (
     <>
       <PageHeader
-        eyebrow="Parent area"
-        title="Homework Library"
-        description="Upload each week's homework once. Your children can then practise it digitally."
+        eyebrow={shared ? "Admin area" : "Parent area"}
+        title={shared ? "Shared library" : "Homework Library"}
+        description={
+          shared
+            ? "Practice sets by year and topic. Once published, every family's children can use them."
+            : "Upload each week's homework once. Your children can then practise it digitally."
+        }
         actions={
-          <Link
-            href="/library/new"
-            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
-          >
-            + Upload homework
-          </Link>
+          (!shared || isAdmin) && (
+            <Link
+              href={shared ? "/library/new?shared=1" : "/library/new"}
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+            >
+              {shared ? "+ Add practice set" : "+ Upload homework"}
+            </Link>
+          )
         }
       />
+
+      {(isAdmin || shared) && (
+        <div role="tablist" aria-label="Library" className="mb-5 flex gap-2">
+          {(["mine", "shared"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={scope === value}
+              onClick={() => {
+                setScope(value);
+                setSets(null);
+                window.history.replaceState(null, "", value === "shared" ? "/library?scope=shared" : "/library");
+              }}
+              className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                scope === value ? "bg-slate-900 text-white" : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              {value === "mine" ? "My homework" : "🌍 Shared library"}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="mb-5 grid gap-3 sm:grid-cols-[1fr_auto_auto]">
         <label>
@@ -124,15 +163,27 @@ export default function LibraryList() {
             ))}
           </select>
         </label>
-        <label>
-          <span className="sr-only">Week</span>
-          <select value={week} onChange={(e) => setWeek(e.target.value)} className={inputClass}>
-            <option value="">All weeks</option>
-            {WEEKS.map((w) => (
-              <option key={w} value={w}>Week {w}</option>
-            ))}
-          </select>
-        </label>
+        {shared ? (
+          <label>
+            <span className="sr-only">Topic</span>
+            <select value={topic} onChange={(e) => setTopic(e.target.value)} className={inputClass}>
+              <option value="">All topics</option>
+              {topics.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <label>
+            <span className="sr-only">Week</span>
+            <select value={week} onChange={(e) => setWeek(e.target.value)} className={inputClass}>
+              <option value="">All weeks</option>
+              {WEEKS.map((w) => (
+                <option key={w} value={w}>Week {w}</option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       {error && (
@@ -144,8 +195,14 @@ export default function LibraryList() {
       {sets === null && !error && <Spinner label="Loading homework…" />}
 
       {sets?.length === 0 && (
-        <EmptyState icon="📚" title={year || week || debouncedSearch ? "No homework matches these filters" : "Your library is empty"}>
-          {year || week || debouncedSearch ? "Try a different year, week or search." : "Upload this week's homework sheet to get started."}
+        <EmptyState icon="📚" title={year || week || topic || debouncedSearch ? "Nothing matches these filters" : shared ? "The shared library is empty" : "Your library is empty"}>
+          {year || week || topic || debouncedSearch
+            ? "Try a different year, week, topic or search."
+            : shared
+              ? isAdmin
+                ? "Add a practice set for a year and topic to get started."
+                : "Admins haven't added any shared practice sets yet."
+              : "Upload this week's homework sheet to get started."}
         </EmptyState>
       )}
 
@@ -154,10 +211,17 @@ export default function LibraryList() {
           {sets.map((set) => (
             <li key={set.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-indigo-50 text-center leading-tight">
-                  <span className="text-[10px] font-semibold uppercase text-indigo-600">Week</span>
-                  <span className="text-lg font-bold text-indigo-800">{set.weekNumber}</span>
-                </div>
+                {set.visibility === "shared" ? (
+                  <div className="grid h-14 min-w-14 max-w-28 shrink-0 place-items-center rounded-2xl bg-emerald-50 px-2 text-center leading-tight">
+                    <span className="text-[10px] font-semibold uppercase text-emerald-700">Topic</span>
+                    <span className="line-clamp-2 text-xs font-bold text-emerald-900">{set.topic}</span>
+                  </div>
+                ) : (
+                  <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-indigo-50 text-center leading-tight">
+                    <span className="text-[10px] font-semibold uppercase text-indigo-600">Week</span>
+                    <span className="text-lg font-bold text-indigo-800">{set.weekNumber}</span>
+                  </div>
+                )}
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <Link href={`/library/${set.id}`} className="truncate text-lg font-semibold text-slate-900 hover:text-indigo-700">
@@ -178,29 +242,34 @@ export default function LibraryList() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Link
-                    href={`/library/${set.id}`}
-                    className="rounded-xl bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
-                  >
-                    {set.status === "draft" ? "Review & edit" : "View & edit"}
-                  </Link>
+                  {set.canEdit && (
+                    <Link
+                      href={`/library/${set.id}`}
+                      className="rounded-xl bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
+                    >
+                      {set.status === "draft" ? "Review & edit" : "View & edit"}
+                    </Link>
+                  )}
                   {set.hasFile && (
                     <Button variant="ghost" size="sm" onClick={() => openOriginalFile(set.id).catch((e) => setError(errorMessage(e)))}>
                       Original
                     </Button>
                   )}
-                  {set.status === "published" ? (
-                    <Button variant="secondary" size="sm" disabled={busyId === set.id} onClick={() => setStatus(set, "draft")}>
-                      Unpublish
-                    </Button>
-                  ) : (
-                    <Button size="sm" disabled={busyId === set.id || set.questionCount === 0} onClick={() => setStatus(set, "published")}>
-                      Publish
+                  {set.canEdit &&
+                    (set.status === "published" ? (
+                      <Button variant="secondary" size="sm" disabled={busyId === set.id} onClick={() => setStatus(set, "draft")}>
+                        Unpublish
+                      </Button>
+                    ) : (
+                      <Button size="sm" disabled={busyId === set.id || set.questionCount === 0} onClick={() => setStatus(set, "published")}>
+                        Publish
+                      </Button>
+                    ))}
+                  {set.canEdit && (
+                    <Button variant="ghost" size="sm" className="text-rose-700" onClick={() => setToDelete(set)}>
+                      Delete
                     </Button>
                   )}
-                  <Button variant="ghost" size="sm" className="text-rose-700" onClick={() => setToDelete(set)}>
-                    Delete
-                  </Button>
                 </div>
               </div>
             </li>
@@ -218,8 +287,9 @@ export default function LibraryList() {
         onCancel={() => setToDelete(null)}
       >
         <p>
-          <strong>{toDelete?.title}</strong> (Year {toDelete?.schoolYear}, Week {toDelete?.weekNumber}) will be deleted,
-          together with its questions, the original file and <strong>all of your children&apos;s attempts and scores</strong> for it.
+          <strong>{toDelete?.title}</strong> (Year {toDelete?.schoolYear}, {toDelete?.visibility === "shared" ? `topic ${toDelete?.topic}` : `Week ${toDelete?.weekNumber}`}) will be deleted,
+          together with its questions, the original file and{" "}
+          <strong>{toDelete?.visibility === "shared" ? "every family's attempts and scores" : "all of your children's attempts and scores"}</strong> for it.
           This can&apos;t be undone.
         </p>
       </ConfirmDialog>

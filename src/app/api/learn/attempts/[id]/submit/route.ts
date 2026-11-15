@@ -85,7 +85,8 @@ export const POST = route(
     const startedAt = Date.now();
     try {
       // 4. Questions with answer keys (server only) and the saved answers.
-      const questions = await loadMarkableQuestions(admin, attempt.homework_set_id);
+      // A section retake is marked (and scored) on its section only.
+      const questions = await loadMarkableQuestions(admin, attempt.homework_set_id, attempt.section_id);
       const { data: answerRows, error: answersError } = await admin
         .from("student_answers")
         .select("question_id, student_answer, check_count, first_status, first_marks")
@@ -113,6 +114,12 @@ export const POST = route(
           status: first.status,
           awardedMarks: Math.min(Math.max(first.marks, 0), marksById.get(o.questionId) ?? 0),
           corrected: o.status === "correct" && first.status !== "correct",
+          ...(o.status === "correct" && first.status !== "correct"
+            ? {
+                feedback: "Not right the first time, but you fixed it after checking - well done!",
+                explanation: o.correctAnswer ? `The answer is ${o.correctAnswer}.` : o.explanation,
+              }
+            : {}),
         };
       });
 

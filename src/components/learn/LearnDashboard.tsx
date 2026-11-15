@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Button, Card, EmptyState, ErrorBanner, Field, inputClass, PageHeader, Pill, Spinner } from "@/components/ui";
 import { errorMessage, fetchJson } from "@/lib/client/fetchJson";
@@ -14,10 +13,12 @@ interface HomeworkItem {
   id: string;
   title: string;
   schoolYear: number;
-  weekNumber: number;
+  weekNumber: number | null;
+  topic: string | null;
   subject: SetSubject;
   homeworkDate: string | null;
   questionCount: number;
+  sectionCount: number;
 }
 
 function readActiveStudent(): string | null {
@@ -80,16 +81,16 @@ function AddStudentForm({ onAdded, onCancel }: { onAdded: (s: StudentProfile) =>
 }
 
 export default function LearnDashboard() {
-  const router = useRouter();
   const [students, setStudents] = useState<StudentProfile[] | null>(null);
   const [studentId, setStudentId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [year, setYear] = useState<number | null>(null);
   const [week, setWeek] = useState("");
   const [homework, setHomework] = useState<HomeworkItem[] | null>(null);
+  const [shared, setShared] = useState<HomeworkItem[]>([]);
+  const [tab, setTab] = useState<"homework" | "library">("homework");
   const [attempts, setAttempts] = useState<AttemptSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [starting, setStarting] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
 
   // Load child profiles once.
@@ -119,10 +120,11 @@ export default function LearnDashboard() {
     let cancelled = false;
     const params = new URLSearchParams({ studentId, year: String(year) });
     if (week) params.set("week", week);
-    fetchJson<{ homework: HomeworkItem[]; attempts: AttemptSummary[] }>(`/api/learn/homework?${params}`).then(
+    fetchJson<{ homework: HomeworkItem[]; shared: HomeworkItem[]; attempts: AttemptSummary[] }>(`/api/learn/homework?${params}`).then(
       (data) => {
         if (cancelled) return;
         setHomework(data.homework);
+        setShared(data.shared);
         setAttempts(data.attempts);
         setError(null);
       },
@@ -138,10 +140,20 @@ export default function LearnDashboard() {
   const byWeek = useMemo(() => {
     const groups = new Map<number, HomeworkItem[]>();
     for (const item of homework ?? []) {
-      groups.set(item.weekNumber, [...(groups.get(item.weekNumber) ?? []), item]);
+      const key = item.weekNumber ?? 0;
+      groups.set(key, [...(groups.get(key) ?? []), item]);
     }
     return [...groups.entries()].sort((a, b) => b[0] - a[0]);
   }, [homework]);
+
+  const byTopic = useMemo(() => {
+    const groups = new Map<string, HomeworkItem[]>();
+    for (const item of shared) {
+      const key = item.topic ?? "Other";
+      groups.set(key, [...(groups.get(key) ?? []), item]);
+    }
+    return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [shared]);
 
   function chooseStudent(s: StudentProfile) {
     setStudentId(s.id);
@@ -151,21 +163,7 @@ export default function LearnDashboard() {
     writeActiveStudent(s.id);
   }
 
-  async function start(setId: string) {
-    if (!studentId) return;
-    setStarting(setId);
-    setError(null);
-    try {
-      const data = await fetchJson<{ attemptId: string }>("/api/learn/attempts", {
-        method: "POST",
-        json: { studentId, homeworkSetId: setId },
-      });
-      router.push(`/learn/attempt/${data.attemptId}`);
-    } catch (err) {
-      setError(errorMessage(err));
-      setStarting(null);
-    }
-  }
+
 
   if (students === null) return error ? <ErrorBanner message={error} /> : <Spinner />;
 
@@ -213,81 +211,127 @@ export default function LearnDashboard() {
         <Button variant="ghost" size="sm" onClick={() => setAdding(true)}>+ Add child</Button>
       </div>
 
+      <div role="tablist" aria-label="What to practise" className="mb-5 flex flex-wrap gap-2">
+        {([
+          ["homework", "📝 My homework"],
+          ["library", `🌍 Practice library${shared.length ? ` (${shared.length})` : ""}`],
+        ] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            aria-selected={tab === value}
+            onClick={() => setTab(value)}
+            className={`rounded-full px-4 py-2 text-sm font-semibold ${
+              tab === value ? "bg-slate-900 text-white" : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div className="mb-6 grid grid-cols-2 gap-3 sm:max-w-md">
         <Field label="Year">
           <select value={year ?? ""} onChange={(e) => setYear(Number(e.target.value))} className={`${inputClass} text-base`}>
             {SCHOOL_YEARS.map((y) => <option key={y} value={y}>Year {y}</option>)}
           </select>
         </Field>
-        <Field label="Week">
-          <select value={week} onChange={(e) => setWeek(e.target.value)} className={`${inputClass} text-base`}>
-            <option value="">All weeks</option>
-            {WEEKS.map((w) => <option key={w} value={w}>Week {w}</option>)}
-          </select>
-        </Field>
+        {tab === "homework" && (
+          <Field label="Week">
+            <select value={week} onChange={(e) => setWeek(e.target.value)} className={`${inputClass} text-base`}>
+              <option value="">All weeks</option>
+              {WEEKS.map((w) => <option key={w} value={w}>Week {w}</option>)}
+            </select>
+          </Field>
+        )}
       </div>
 
       {error && <div className="mb-4"><ErrorBanner message={error} onRetry={() => setReload((n) => n + 1)} /></div>}
 
       {homework === null && !error && <Spinner label="Finding your homework…" />}
 
-      {homework?.length === 0 && (
+      {tab === "homework" && homework?.length === 0 && (
         <EmptyState icon="🗓️" title="No homework here yet">
           Ask a grown-up to add and publish this week&apos;s homework in the Library.
         </EmptyState>
       )}
+      {tab === "library" && homework !== null && shared.length === 0 && (
+        <EmptyState icon="🌍" title={`No practice sets for Year ${year} yet`}>
+          The shared practice library is added to by admins. Try another year.
+        </EmptyState>
+      )}
 
       <div className="space-y-8">
-        {byWeek.map(([weekNumber, items]) => (
-          <section key={weekNumber}>
-            <h2 className="mb-3 text-lg font-bold text-slate-900">Week {weekNumber}</h2>
+        {(tab === "homework" ? byWeek.map(([w, items]) => [`Week ${w}`, items] as const) : byTopic).map(([heading, items]) => (
+          <section key={heading}>
+            <h2 className="mb-3 text-lg font-bold text-slate-900">{heading}</h2>
             <ul className="grid gap-3 sm:grid-cols-2">
-              {items.map((item) => {
-                const mine = attempts.filter((a) => a.homeworkSetId === item.id);
-                const open = mine.find((a) => a.status !== "completed");
-                const done = mine.filter((a) => a.status === "completed");
-                const best = done.reduce<AttemptSummary | null>((b, a) => (!b || (a.percentage ?? 0) > (b.percentage ?? 0) ? a : b), null);
-                return (
-                  <li key={item.id} className="flex flex-col rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="text-lg font-semibold text-slate-900">{item.title}</h3>
-                      <Pill tone="indigo">{item.subject === "Both" ? "English & Maths" : item.subject}</Pill>
-                    </div>
-                    <p className="mt-1 text-sm text-slate-600">{item.questionCount} questions</p>
-                    {best && (
-                      <p className="mt-2 text-sm font-semibold text-emerald-700">
-                        ⭐ Best score: {best.score}/{best.totalMarks} ({best.percentage ?? 0}%)
-                      </p>
-                    )}
-                    {open && <p className="mt-2 text-sm font-semibold text-amber-800">You&apos;re part way through this one.</p>}
-
-                    <div className="mt-4 flex flex-wrap gap-2 pt-1">
-                      <Button disabled={starting !== null} onClick={() => void start(item.id)}>
-                        {starting === item.id ? "Opening…" : open ? "Carry on" : done.length ? "Practise again" : "Start"}
-                      </Button>
-                    </div>
-
-                    {done.length > 0 && (
-                      <details className="mt-3 text-sm">
-                        <summary className="cursor-pointer font-semibold text-slate-600">Previous attempts ({done.length})</summary>
-                        <ul className="mt-2 space-y-1">
-                          {done.map((a) => (
-                            <li key={a.id}>
-                              <Link href={`/learn/attempt/${a.id}`} className="text-indigo-700 hover:underline">
-                                {new Date(a.submittedAt ?? a.startedAt).toLocaleDateString("en-GB")} — {a.score}/{a.totalMarks} ({a.percentage ?? 0}%)
-                              </Link>
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    )}
-                  </li>
-                );
-              })}
+              {items.map((item) => (
+                <HomeworkCard
+                  key={item.id}
+                  item={item}
+                  attempts={attempts.filter((a) => a.homeworkSetId === item.id)}
+                  studentId={studentId}
+                />
+              ))}
             </ul>
           </section>
         ))}
       </div>
     </>
+  );
+}
+
+function HomeworkCard({
+  item,
+  attempts,
+  studentId,
+}: {
+  item: HomeworkItem;
+  attempts: AttemptSummary[];
+  studentId: string | null;
+}) {
+  // Progress is counted per section: a finished section attempt, or a finished
+  // whole-homework attempt, marks sections as done.
+  const finishedWhole = attempts.some((a) => a.sectionId === null && a.status === "completed");
+  const doneSections = finishedWhole
+    ? item.sectionCount
+    : new Set(attempts.filter((a) => a.sectionId && a.status === "completed").map((a) => a.sectionId)).size;
+  const inProgress = attempts.some((a) => a.status !== "completed");
+  const pct = item.sectionCount ? Math.round((doneSections / item.sectionCount) * 100) : 0;
+  const href = studentId ? `/learn/homework/${item.id}?student=${studentId}` : "/learn";
+
+  return (
+    <li>
+      <Link
+        href={href}
+        className="flex h-full flex-col rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition-colors hover:border-indigo-300 hover:bg-indigo-50/30"
+      >
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="text-lg font-semibold text-slate-900">{item.title}</h3>
+          <Pill tone="indigo">{item.subject === "Both" ? "English & Maths" : item.subject}</Pill>
+        </div>
+        <p className="mt-1 text-sm text-slate-600">
+          {item.sectionCount} section{item.sectionCount === 1 ? "" : "s"} · {item.questionCount} questions
+        </p>
+
+        <div className="mt-4">
+          <div className="mb-1 flex justify-between text-sm font-medium text-slate-700">
+            <span>
+              {doneSections === 0 ? "Not started yet" : doneSections === item.sectionCount ? "All sections done! 🎉" : `${doneSections} of ${item.sectionCount} sections done`}
+            </span>
+            {inProgress && <span className="text-amber-800">In progress</span>}
+          </div>
+          <div className="h-2.5 overflow-hidden rounded-full bg-slate-100" aria-hidden>
+            <div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+
+        <span className="mt-4 inline-flex w-fit items-center rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white">
+          {doneSections === 0 && !inProgress ? "Let's start →" : doneSections === item.sectionCount ? "See my scores →" : "Keep going →"}
+        </span>
+      </Link>
+    </li>
   );
 }

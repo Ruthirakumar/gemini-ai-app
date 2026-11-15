@@ -32,7 +32,8 @@ export const POST = route(
     }
 
     const admin = createSupabaseAdminClient();
-    const questions = await loadMarkableQuestions(admin, attempt.homework_set_id);
+    // A section retake can only check questions in its section.
+    const questions = await loadMarkableQuestions(admin, attempt.homework_set_id, attempt.section_id);
     const byId = new Map(questions.map((q) => [q.id, q]));
     if (answers.some((a) => !byId.has(a.questionId))) {
       throw new HomeworkError(400, "bad_answers", "Some questions don't belong to this homework. Please refresh the page.");

@@ -25,7 +25,9 @@ export interface PracticeQuestionView {
   questionText: string;
   questionType: QuestionType;
   marks: number;
-  data: Omit<QuestionData, "reviewReason">;
+  data: Omit<QuestionData, "reviewReason" | "figurePath">;
+  /** Signed URL of the cropped picture this question needs, if any. */
+  figureUrl: string | null;
 }
 
 export interface PracticeSectionView {
@@ -103,10 +105,16 @@ export interface AttemptView {
     id: string;
     title: string;
     schoolYear: number;
-    weekNumber: number;
+    weekNumber: number | null;
+    topic: string | null;
+    visibility: "private" | "shared";
     subject: SetSubject;
     hasFile: boolean;
   };
+  /** Set when this attempt is a retake of one section; null = whole homework. */
+  scope: { sectionId: string; sectionTitle: string } | null;
+  /** Every section of the homework, in order (titles only) - for "Next section". */
+  homeworkSections: { id: string; title: string }[];
   sections: PracticeSectionView[];
   answers: Record<string, string>;
   progress: AttemptProgress;
@@ -122,6 +130,8 @@ export interface AttemptView {
 export interface AttemptSummary {
   id: string;
   homeworkSetId: string;
+  /** Section retake, or null for the whole homework. */
+  sectionId: string | null;
   status: AttemptView["status"];
   score: number | null;
   totalMarks: number;
@@ -136,3 +146,34 @@ export const saveAnswersSchema = z.object({
     .max(400),
   progress: attemptProgressSchema.optional(),
 });
+
+/* ------------------------------------------------------------------ */
+/* Score history per section                                           */
+/* ------------------------------------------------------------------ */
+
+export interface SectionScoreEntry {
+  attemptId: string;
+  /** "whole" = part of a full homework attempt; "retake" = a section retake. */
+  kind: "whole" | "retake";
+  date: string;
+  score: number;
+  total: number;
+  percentage: number | null;
+}
+
+export interface SectionHistory {
+  sectionId: string;
+  sectionTitle: string;
+  subject: "English" | "Maths";
+  /** Oldest first. */
+  entries: SectionScoreEntry[];
+  best: number | null;
+  latest: number | null;
+}
+
+export interface HomeworkHistory {
+  homework: { id: string; title: string; schoolYear: number; weekNumber: number | null; topic: string | null; subject: SetSubject };
+  student: StudentProfile;
+  sections: SectionHistory[];
+  attempts: AttemptSummary[];
+}

@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import PracticeQuestion from "@/components/homework/PracticeQuestion";
 import { Button, ErrorBanner, Pill } from "@/components/ui";
+import QuestionFigure from "./QuestionFigure";
 import { errorMessage, fetchJson } from "@/lib/client/fetchJson";
 import { groupQuestions, partLabel } from "@/lib/learn/grouping";
+import { navigate } from "@/lib/client/navigate";
 import type { PublicPracticeQuestion } from "@/lib/homework/types";
 import type { AttemptView, MarkingStatus, PracticeQuestionView, QuestionResult } from "@/lib/learn/types";
 import { SECTION_SUBJECTS } from "@/lib/library/types";
@@ -105,6 +107,12 @@ function ResultCard({
         </div>
       </header>
 
+      {q.figureUrl && (
+        <div className="mt-3">
+          <QuestionFigure src={q.figureUrl} alt={`Picture for question ${label}`} size="sm" />
+        </div>
+      )}
+
       <dl className={`mt-4 grid gap-3 ${showAnswer ? "sm:grid-cols-2" : ""}`}>
         <div className="rounded-xl bg-slate-50 px-4 py-3">
           <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Your answer</dt>
@@ -157,18 +165,21 @@ export default function AttemptResults({ attempt }: { attempt: AttemptView }) {
   const score = attempt.score;
   const pct = score?.percentage ?? null;
   const fixedCount = Object.values(results).filter((r) => r.corrected).length;
+  // After a section, offer the next one in the homework.
+  const sectionIndex = attempt.scope ? attempt.homeworkSections.findIndex((s) => s.id === attempt.scope!.sectionId) : -1;
+  const nextSection = sectionIndex >= 0 ? attempt.homeworkSections[sectionIndex + 1] ?? null : null;
 
   const headline =
     pct === null ? "All handed in!" : pct >= 90 ? "Amazing work! 🌟" : pct >= 70 ? "Great job! 🎉" : pct >= 40 ? "Good effort! 💪" : "Good try - let's learn together! 📚";
 
-  async function practiseAgain() {
+  async function practiseAgain(sectionId: string | null = attempt.scope?.sectionId ?? null) {
     setRestarting(true);
     try {
       const data = await fetchJson<{ attemptId: string }>("/api/learn/attempts", {
         method: "POST",
-        json: { studentId: attempt.student.id, homeworkSetId: attempt.homework.id },
+        json: { studentId: attempt.student.id, homeworkSetId: attempt.homework.id, sectionId },
       });
-      router.push(`/learn/attempt/${data.attemptId}`);
+      navigate(router, `/learn/attempt/${data.attemptId}`);
     } catch (err) {
       setError(errorMessage(err));
       setRestarting(false);
@@ -190,7 +201,7 @@ export default function AttemptResults({ attempt }: { attempt: AttemptView }) {
   return (
     <div className="space-y-6">
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
-        <Link href="/learn" className="text-sm font-semibold text-indigo-700 hover:underline">← My homework</Link>
+        <Link href={`/learn/homework/${attempt.homework.id}?student=${attempt.student.id}`} className="text-sm font-semibold text-indigo-700 hover:underline">← All sections</Link>
         <div className="mt-3 flex flex-col gap-6 sm:flex-row sm:items-center">
           <div className="grid h-32 w-32 shrink-0 place-items-center rounded-full bg-indigo-50 ring-8 ring-indigo-100">
             <div className="text-center">
@@ -200,7 +211,10 @@ export default function AttemptResults({ attempt }: { attempt: AttemptView }) {
           </div>
           <div className="min-w-0">
             <p className="text-sm text-slate-500">
-              {attempt.homework.title} · Year {attempt.homework.schoolYear} · Week {attempt.homework.weekNumber}
+              {attempt.homework.title} · Year {attempt.homework.schoolYear}
+              {attempt.homework.weekNumber ? ` · Week ${attempt.homework.weekNumber}` : ""}
+              {attempt.homework.topic ? ` · ${attempt.homework.topic}` : ""}
+              {attempt.scope ? ` · Retake: ${attempt.scope.sectionTitle}` : ""}
             </p>
             <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">{headline}</h1>
             <p className="mt-2 text-slate-600">
@@ -227,12 +241,25 @@ export default function AttemptResults({ attempt }: { attempt: AttemptView }) {
         </dl>
 
         <div className="mt-6 flex flex-wrap gap-2">
-          <Button onClick={() => setFilter("incorrect")} disabled={!score?.counts.incorrect && !score?.counts.partially_correct}>
-            Practise my mistakes
-          </Button>
+          {nextSection && (
+            <Button onClick={() => void practiseAgain(nextSection.id)} disabled={restarting}>
+              {restarting ? "Starting…" : `Next section: ${nextSection.title.slice(0, 40)} →`}
+            </Button>
+          )}
+          {(score?.counts.incorrect || score?.counts.partially_correct) ? (
+            <Button variant={nextSection ? "secondary" : "primary"} onClick={() => setFilter("incorrect")}>
+              Practise my mistakes
+            </Button>
+          ) : null}
           <Button variant="secondary" onClick={() => void practiseAgain()} disabled={restarting}>
-            {restarting ? "Starting…" : "Do this homework again"}
+            {restarting ? "Starting…" : attempt.scope ? "↻ Practise this section again" : "Do this homework again"}
           </Button>
+          <Link
+            href={`/learn/homework/${attempt.homework.id}?student=${attempt.student.id}`}
+            className="inline-flex items-center rounded-xl px-4 py-2.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
+          >
+            📋 All sections &amp; scores
+          </Link>
         </div>
         {error && <div className="mt-3"><ErrorBanner message={error} /></div>}
       </section>
@@ -274,11 +301,21 @@ export default function AttemptResults({ attempt }: { attempt: AttemptView }) {
               const sr = section.questions.map((q) => results[q.id]).filter(Boolean);
               return (
                 <div key={section.id} className="space-y-3">
-                  <h3 className="text-lg font-semibold text-slate-800">
+                  <h3 className="flex flex-wrap items-center gap-2 text-lg font-semibold text-slate-800">
                     {section.sectionTitle}{" "}
                     <span className="text-sm font-normal text-slate-500">
                       ({sr.reduce((n, r) => n + (r.status === "needs_review" ? 0 : r.awardedMarks), 0)}/{sr.reduce((n, r) => n + (r.status === "needs_review" ? 0 : r.marks), 0)})
                     </span>
+                    {!attempt.scope && (
+                      <button
+                        type="button"
+                        disabled={restarting}
+                        onClick={() => void practiseAgain(section.id)}
+                        className="ml-auto rounded-xl bg-white px-3 py-1 text-sm font-semibold text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-50 disabled:opacity-50"
+                      >
+                        ↻ Retake this section
+                      </button>
+                    )}
                   </h3>
                   {groupQuestions(section.questions).map((group) => {
                     const shown = group.parts.filter(visible);

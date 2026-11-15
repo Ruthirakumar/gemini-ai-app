@@ -63,7 +63,8 @@ function move<T>(items: T[], index: number, direction: -1 | 1): T[] {
 interface Meta {
   title: string;
   schoolYear: number;
-  weekNumber: number;
+  weekNumber: number | null;
+  topic: string | null;
   subject: SetSubject;
   homeworkDate: string | null;
 }
@@ -84,7 +85,7 @@ export default function HomeworkEditor({ setId }: { setId: string }) {
   const applyDetail = useCallback((d: HomeworkSetDetail) => {
     setDetail(d);
     setSections(withKeys(d.sections));
-    setMeta({ title: d.title, schoolYear: d.schoolYear, weekNumber: d.weekNumber, subject: d.subject, homeworkDate: d.homeworkDate });
+    setMeta({ title: d.title, schoolYear: d.schoolYear, weekNumber: d.weekNumber, topic: d.topic, subject: d.subject, homeworkDate: d.homeworkDate });
     setDirty(false);
   }, []);
 
@@ -148,8 +149,12 @@ export default function HomeworkEditor({ setId }: { setId: string }) {
     setBusy("save");
     setError(null);
     try {
-      if (detail && (meta.title !== detail.title || meta.schoolYear !== detail.schoolYear || meta.weekNumber !== detail.weekNumber || meta.subject !== detail.subject || meta.homeworkDate !== detail.homeworkDate)) {
-        await fetchJson(`/api/library/sets/${setId}`, { method: "PATCH", json: meta });
+      if (detail && (meta.title !== detail.title || meta.schoolYear !== detail.schoolYear || meta.weekNumber !== detail.weekNumber || meta.topic !== detail.topic || meta.subject !== detail.subject || meta.homeworkDate !== detail.homeworkDate)) {
+        const { weekNumber, topic, ...common } = meta;
+        await fetchJson(`/api/library/sets/${setId}`, {
+          method: "PATCH",
+          json: detail.visibility === "shared" ? { ...common, topic } : { ...common, weekNumber },
+        });
       }
       const data = await fetchJson<{ set: HomeworkSetDetail }>(`/api/library/sets/${setId}/content`, {
         method: "PUT",
@@ -221,8 +226,11 @@ export default function HomeworkEditor({ setId }: { setId: string }) {
     <div className={showFile ? "grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]" : ""}>
       <div className="min-w-0 space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Link href="/library" className="text-sm font-semibold text-indigo-700 hover:underline">← Homework Library</Link>
+          <Link href={detail.visibility === "shared" ? "/library?scope=shared" : "/library"} className="text-sm font-semibold text-indigo-700 hover:underline">
+            ← {detail.visibility === "shared" ? "Shared library" : "Homework Library"}
+          </Link>
           <div className="flex items-center gap-2">
+            {detail.visibility === "shared" && <Pill tone="indigo">🌍 Shared with all families</Pill>}
             <StatusPill status={detail.status} />
             {dirty && <Pill tone="amber">Unsaved changes</Pill>}
           </div>
@@ -238,11 +246,17 @@ export default function HomeworkEditor({ setId }: { setId: string }) {
                 {SCHOOL_YEARS.map((y) => <option key={y} value={y}>Year {y}</option>)}
               </select>
             </Field>
-            <Field label="Week">
-              <select value={meta.weekNumber} onChange={(e) => { setMeta({ ...meta, weekNumber: Number(e.target.value) }); setDirty(true); }} className={inputClass}>
-                {WEEKS.map((w) => <option key={w} value={w}>Week {w}</option>)}
-              </select>
-            </Field>
+            {detail.visibility === "shared" ? (
+              <Field label="Topic" hint="Children browse the shared library by year, then topic.">
+                <input value={meta.topic ?? ""} maxLength={100} onChange={(e) => { setMeta({ ...meta, topic: e.target.value }); setDirty(true); }} className={inputClass} />
+              </Field>
+            ) : (
+              <Field label="Week">
+                <select value={meta.weekNumber ?? 1} onChange={(e) => { setMeta({ ...meta, weekNumber: Number(e.target.value) }); setDirty(true); }} className={inputClass}>
+                  {WEEKS.map((w) => <option key={w} value={w}>Week {w}</option>)}
+                </select>
+              </Field>
+            )}
             <Field label="Subject">
               <select value={meta.subject} onChange={(e) => { setMeta({ ...meta, subject: e.target.value as SetSubject }); setDirty(true); }} className={inputClass}>
                 <option value="Both">English and Maths</option>
@@ -350,6 +364,7 @@ export default function HomeworkEditor({ setId }: { setId: string }) {
                         )
                       )
                     }
+                    figureUrl={q.questionData.figurePath ? detail.figureUrls[q.questionData.figurePath] : null}
                     isFirst={qIndex === 0}
                     isLast={qIndex === section.questions.length - 1}
                   />

@@ -17,6 +17,8 @@ interface Props {
   onMoveToSection: (sectionKey: string) => void;
   isFirst: boolean;
   isLast: boolean;
+  /** Signed URL for questionData.figurePath, if it has a picture. */
+  figureUrl?: string | null;
 }
 
 const lines = (value: string[]) => value.join("\n");
@@ -34,6 +36,7 @@ export default function QuestionEditor({
   onMoveToSection,
   isFirst,
   isLast,
+  figureUrl,
 }: Props) {
   const set = <K extends keyof KeyedQuestion>(key: K, value: KeyedQuestion[K]) => onChange({ ...q, [key]: value });
   const setData = <K extends keyof KeyedQuestion["questionData"]>(key: K, value: KeyedQuestion["questionData"][K]) =>
@@ -60,6 +63,7 @@ export default function QuestionEditor({
                 Answer: <strong className={missingAnswer ? "text-rose-700" : "text-slate-800"}>{q.markingCriteria.expectedAnswer || "missing"}</strong>
               </span>
             )}
+            {q.questionData.figurePath && <Pill tone="blue">📷 Picture</Pill>}
             {q.needsReview && <Pill tone="amber">⚠ Needs review</Pill>}
           </div>
         </button>
@@ -114,6 +118,23 @@ export default function QuestionEditor({
               />
             </Field>
           </div>
+
+          {q.questionData.figurePath && (
+            <div className="flex flex-wrap items-end gap-3 rounded-xl bg-sky-50/60 p-3 ring-1 ring-sky-100">
+              {figureUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element -- private signed URL
+                <img src={figureUrl} alt={`Picture for question ${q.questionNumber}`} className="max-h-40 rounded-lg border border-slate-200 bg-white p-1" />
+              ) : (
+                <span className="text-sm text-slate-600">Picture attached (save to refresh the preview).</span>
+              )}
+              <div className="text-sm text-slate-600">
+                <p>Shown to the child next to this question.</p>
+                <button type="button" className="mt-1 font-semibold text-rose-700 hover:underline" onClick={() => setData("figurePath", null)}>
+                  Remove picture (wrong crop)
+                </button>
+              </div>
+            </div>
+          )}
 
           <Field label="Question text">
             <textarea rows={2} maxLength={4000} value={q.questionText} onChange={(e) => set("questionText", e.target.value)} className={inputClass} />

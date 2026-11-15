@@ -49,6 +49,8 @@ export const questionDataSchema = z.object({
   /** Where to look on the original sheet for a diagram/table. Must not give the answer away. */
   visualReference: z.string().max(500).nullable().default(null),
   reviewReason: z.string().max(500).nullable().default(null),
+  /** Cropped picture for this question, in private storage ("<user>/<set>/figures/<n>.png"). */
+  figurePath: z.string().max(400).nullable().default(null),
 });
 export type QuestionData = z.infer<typeof questionDataSchema>;
 
@@ -90,28 +92,43 @@ export const editorContentSchema = z.object({
   sections: z.array(editorSectionSchema).max(50),
 });
 
-export const setMetadataSchema = z.object({
+export const SET_VISIBILITIES = ["private", "shared"] as const;
+export type SetVisibility = (typeof SET_VISIBILITIES)[number];
+
+/** Fields of a set. Private homework needs a week; shared library sets need a topic. */
+export const setFieldsSchema = z.object({
   title: z.string().trim().min(1, "Please enter a title").max(200),
   schoolYear: z.number().int().min(1).max(13),
-  weekNumber: z.number().int().min(1).max(52),
+  weekNumber: z.number().int().min(1).max(52).nullable().default(null),
   subject: z.enum(SET_SUBJECTS),
-  homeworkDate: z.iso.date().nullable(),
+  homeworkDate: z.iso.date().nullable().default(null),
+  visibility: z.enum(SET_VISIBILITIES).default("private"),
+  topic: z.string().trim().max(100).nullable().default(null),
 });
+
+export const setMetadataSchema = setFieldsSchema
+  .refine((m) => m.visibility === "shared" || m.weekNumber !== null, { message: "Please choose a week", path: ["weekNumber"] })
+  .refine((m) => m.visibility === "private" || !!m.topic?.trim(), { message: "Please enter a topic", path: ["topic"] });
 export type SetMetadata = z.infer<typeof setMetadataSchema>;
 
 export interface HomeworkSetSummary {
   id: string;
   title: string;
   schoolYear: number;
-  weekNumber: number;
+  weekNumber: number | null;
   subject: SetSubject;
   homeworkDate: string | null;
+  visibility: SetVisibility;
+  topic: string | null;
+  /** Whether the signed-in user may edit it (owner, or admin for shared sets). */
+  canEdit: boolean;
   status: SetStatus;
   extractionStatus: "pending" | "processing" | "completed" | "failed";
   extractionError: string | null;
   originalFileName: string | null;
   hasFile: boolean;
   questionCount: number;
+  sectionCount: number;
   needsReviewCount: number;
   updatedAt: string;
 }
@@ -119,6 +136,8 @@ export interface HomeworkSetSummary {
 export interface HomeworkSetDetail extends HomeworkSetSummary {
   sections: EditorSection[];
   attemptCount: number;
+  /** Short-lived signed URLs for questionData.figurePath values. */
+  figureUrls: Record<string, string>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -137,6 +156,7 @@ export const extractedQuestionSchema = z.object({
   selectCount: z.number().int().describe("How many options must be chosen (1 normally, 2 for 'underline two words')."),
   unit: z.string().nullable().describe("Unit for the answer box if any, e.g. 'p', 'cm'. null otherwise."),
   visualReference: z.string().nullable().describe("If a diagram/table/picture is needed, where it is (e.g. 'the 2nd angle in the top row on page 1'). Must NOT reveal the answer. null otherwise."),
+  figureBox: z.array(z.number()).nullable().describe("If the child must SEE a picture for this item (angle, shape, clock, table, diagram): its bounding box on its page as [ymin, xmin, ymax, xmax] scaled 0-1000. Box only the picture this item needs (e.g. one angle), not the answer line. null if no picture is needed."),
   marks: z.number().int().describe("Marks available. 1 for most items; more for multi-step problems or definitions. 0 for not_digital."),
   expectedAnswer: z.string().describe("The correct answer. For open questions, a model answer."),
   acceptableAnswers: z.array(z.string()).describe("Other correct forms/answers, e.g. '£15.40' for '1540p'."),

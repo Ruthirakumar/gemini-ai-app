@@ -6,7 +6,7 @@ A homework helper for UK primary school children (Years 3–4), built with Next.
 | --- | --- | --- | --- |
 | Photo checker | `/` | Upload a photo or PDF of completed homework; Gemini marks it and explains mistakes | No |
 | Homework Library | `/library` | Parents upload weekly homework, review the extracted questions, publish | Yes |
-| Practise | `/learn` | Children pick Year/Week, answer digitally, hand in, see results, practise similar questions | Yes |
+| Practise | `/learn` | Children pick Year/Week (or a topic from the shared Practice library), check answers as they go, hand in, retake sections, see score history | Yes |
 | Ask | `/chat` | Original Gemini chat | No |
 
 ## How it fits together
@@ -20,12 +20,28 @@ A homework helper for UK primary school children (Years 3–4), built with Next.
 ## 1. Supabase setup (one-off, free tier)
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. **SQL Editor → New query**: paste the whole of [`supabase/migrations/20261114000000_homework_library.sql`](supabase/migrations/20261114000000_homework_library.sql) and **Run**. It creates the tables, indexes, RLS policies, column privileges, the `save_homework_content` function and the private `worksheets` storage bucket. It is safe to re-run.
+2. **SQL Editor → New query**: run each migration in [`supabase/migrations/`](supabase/migrations/), **in order**, once each (all are safe to re-run):
+   1. `20261114000000_homework_library.sql`: tables, RLS, column privileges, content-save function, private `worksheets` bucket
+   2. `20261115000000_check_as_you_go.sql`: check-as-you-go (tries, first-try scoring)
+   3. `20261116000000_retakes_and_shared_library.sql`: section retakes, score history, admins and the shared library
+
    *(Or with the Supabase CLI: `supabase link` then `supabase db push`.)*
 3. **Authentication → Sign In / Providers → Email**: keep Email enabled.
    - For quick local testing you can turn **Confirm email** off. Leave it on for real use.
 4. **Authentication → URL Configuration**: set **Site URL** to your app URL (e.g. `http://localhost:3000` locally, your Vercel URL in production) and add both to **Redirect URLs**.
 5. **Project Settings → API**: copy the Project URL, the `anon`/publishable key and the `service_role`/secret key into your environment (below).
+
+### Admins (shared practice library)
+
+Admins can add practice sets (by year and topic) that **every family's children** can use. To make an account an admin, sign up with it once, then run in the SQL Editor:
+
+```sql
+insert into public.app_admins (user_id)
+select id from auth.users where email = 'you@example.com'
+on conflict do nothing;
+```
+
+Remove an admin with `delete from public.app_admins where user_id = (select id from auth.users where email = '...');`. Admins see a **Shared library** tab under Library.
 
 ## 2. Environment variables
 

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { gemini, GEMINI_HOMEWORK_MODEL, withGeminiRetry } from "@/lib/gemini";
 import { HomeworkError } from "@/lib/homework/errors";
 import { toGeminiPart, type ValidatedImage } from "@/lib/homework/image";
+import { figureKey, normaliseBox, type FigureRequest } from "./figures";
 import { InvalidModelResponseError, parseModelJson, toGeminiJsonSchema } from "@/lib/homework/validation";
 import {
   EditorQuestion,
@@ -52,6 +53,7 @@ The sheets are usually BLANK (not yet answered). If a child has written answers,
 
 ## Diagrams, tables and pictures
 - If an item depends on a picture (angles, triangles, 3D shapes, clocks, tables), describe in visualReference WHERE the picture is (page + position), never what the answer is. Example: "Page 1, top row, 2nd angle". Set page.
+- figureBox: give the picture's bounding box [ymin, xmin, ymax, xmax] on a 0-1000 scale of its page, so it can be cut out and shown next to the question. Box ONE picture per item when each sub-question has its own picture (each angle, each triangle, each clock, each 3D shape). When all sub-questions share one picture (a table, a house drawing, a price list image), give every one of them the same box. Include the whole picture and its labels, but not answer lines or other questions.
 - Work out the expected answer from the picture itself. If you are not sure (e.g. a triangle could be isosceles or equilateral), give your best answer, set confidence "low" and explain in reviewReason.
 
 ## Answers and marking
@@ -129,7 +131,7 @@ async function extractChunk(parts: Part[], prompt: string) {
             abortSignal: AbortSignal.timeout(CHUNK_TIMEOUT_MS),
           },
         }),
-      { maxAttempts: 2, label: "Extraction" }
+      { maxAttempts: 3, label: "Extraction" }
     );
     return validateExtraction(parseModelJson(response.text));
   };
@@ -214,16 +216,23 @@ export function pagesWithoutQuestions(sections: ExtractedSection[], total: numbe
   return Array.from({ length: total }, (_, i) => i + 1).filter((p) => !covered.has(p));
 }
 
+export interface FigurePlacement extends FigureRequest {
+  sectionIndex: number;
+  questionIndex: number;
+}
+
 /** Converts Gemini output into the editor format (all new: no ids). */
-function toEditorSections(sections: ExtractedSection[]): EditorSection[] {
-  return sections.map((section) => {
+function toEditorSections(sections: ExtractedSection[], figures: FigurePlacement[] = []): EditorSection[] {
+  return sections.map((section, sectionIndex) => {
     const seen = new Map<string, number>();
     return {
       id: null,
       subject: section.subject,
       sectionTitle: section.sectionTitle.trim().slice(0, 200) || "Questions",
       instructions: section.instructions?.trim().slice(0, 2000) || null,
-      questions: section.questions.map((q): EditorQuestion => {
+      questions: section.questions.map((q, questionIndex): EditorQuestion => {
+        const box = normaliseBox(q.figureBox);
+        if (box && q.page >= 1) figures.push({ sectionIndex, questionIndex, page: q.page, box, key: figureKey(q.page, box) });
         // Keep question numbers unique within a section.
         let number = q.questionNumber.trim().slice(0, 16) || "?";
         const count = seen.get(number) ?? 0;
@@ -305,7 +314,8 @@ export async function extractHomework(file: ValidatedImage, subjectHint: SetSubj
 
   const isHomework = results.some((r) => r.isHomework);
   const allSections = mergeChunks(chunks.map((c) => c.sections));
-  const sections = toEditorSections(allSections);
+  const figures: FigurePlacement[] = [];
+  const sections = toEditorSections(allSections, figures);
   const questionCount = sections.reduce((n, s) => n + s.questions.length, 0);
 
   if (!isHomework || questionCount === 0) {
@@ -318,6 +328,8 @@ export async function extractHomework(file: ValidatedImage, subjectHint: SetSubj
 
   return {
     sections,
+    /** Pictures to crop and attach (see attachFigures). */
+    figures,
     suggestedTitle: results.find((r) => r.title)?.title ?? null,
     stats: {
       chunks: ranges.length,
@@ -327,6 +339,7 @@ export async function extractHomework(file: ValidatedImage, subjectHint: SetSubj
       questions: questionCount,
       dropped: results.reduce((n, r) => n + r.dropped, 0),
       needsReview: sections.reduce((n, s) => n + s.questions.filter((q) => q.needsReview).length, 0),
+      figures: new Set(figures.map((f) => f.key)).size,
     },
   };
 }
