@@ -17,6 +17,7 @@ import {
 } from "@/lib/library/types";
 import { StatusPill } from "./LibraryList";
 import QuestionEditor, { KeyedQuestion } from "./QuestionEditor";
+import { makePrivate, ShareDialog } from "./ShareDialog";
 
 type KeyedSection = Omit<EditorSection, "questions"> & { key: string; questions: KeyedQuestion[] };
 
@@ -81,6 +82,8 @@ export default function HomeworkEditor({ setId }: { setId: string }) {
   const [fileUrl, setFileUrl] = useState<{ url: string; type: string | null } | null>(null);
   const [showFile, setShowFile] = useState(false);
   const [confirmExtract, setConfirmExtract] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [confirmUnshare, setConfirmUnshare] = useState(false);
 
   const applyDetail = useCallback((d: HomeworkSetDetail) => {
     setDetail(d);
@@ -202,6 +205,17 @@ export default function HomeworkEditor({ setId }: { setId: string }) {
     }
   }
 
+  async function unshare() {
+    setConfirmUnshare(false);
+    setError(null);
+    try {
+      applyDetail(await makePrivate(setId));
+      setSuccess("It's private again and back in My homework.");
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   async function toggleFile() {
     if (showFile) return setShowFile(false);
     try {
@@ -294,6 +308,16 @@ export default function HomeworkEditor({ setId }: { setId: string }) {
             {detail.hasFile && (
               <Button variant="ghost" onClick={() => void toggleFile()}>
                 {showFile ? "Hide original" : "Show original"}
+              </Button>
+            )}
+            {detail.viewerIsAdmin && detail.isMine && detail.visibility === "private" && (
+              <Button variant="ghost" className="text-emerald-700" disabled={busy !== null || dirty} onClick={() => setSharing(true)} title={dirty ? "Save your changes first" : undefined}>
+                🌍 Share with everyone
+              </Button>
+            )}
+            {detail.isMine && detail.visibility === "shared" && (
+              <Button variant="ghost" disabled={busy !== null} onClick={() => setConfirmUnshare(true)}>
+                Make private
               </Button>
             )}
             {detail.hasFile && !published && detail.attemptCount === 0 && (
@@ -439,6 +463,29 @@ export default function HomeworkEditor({ setId }: { setId: string }) {
           </div>
         </aside>
       )}
+
+      {sharing && (
+        <ShareDialog
+          set={detail}
+          onCancel={() => setSharing(false)}
+          onDone={(shared) => {
+            applyDetail(shared);
+            setSharing(false);
+            setSuccess(`Shared with every family under "${shared.topic}".`);
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        open={confirmUnshare}
+        title="Make this private again?"
+        confirmLabel="Make private"
+        onConfirm={() => void unshare()}
+        onCancel={() => setConfirmUnshare(false)}
+      >
+        It will leave the shared library and go back to your own homework. If other families&apos; children have already
+        practised it, it has to stay shared - unpublish it instead.
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={confirmExtract}

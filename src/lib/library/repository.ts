@@ -74,6 +74,7 @@ export function toSummary(row: SetRow, viewer: Viewer, sections: SectionWithQues
     visibility: row.visibility,
     topic: row.topic,
     canEdit: canEditSet(row, viewer),
+    isMine: row.created_by === viewer.userId,
     status: row.status,
     extractionStatus: row.extraction_status,
     extractionError: row.extraction_error,
@@ -212,7 +213,7 @@ export async function getSetDetailForEditor(supabase: SupabaseClient, viewer: Vi
     editorSections.flatMap((sec) => sec.questions.map((q) => q.questionData.figurePath))
   );
 
-  return { ...toSummary(set, viewer, flags), sections: editorSections, attemptCount: attemptCount ?? 0, figureUrls };
+  return { ...toSummary(set, viewer, flags), sections: editorSections, attemptCount: attemptCount ?? 0, figureUrls, viewerIsAdmin: viewer.isAdmin };
 }
 
 /** Atomically replaces a set's sections/questions (keeps ids of existing rows). */

@@ -122,6 +122,8 @@ export interface HomeworkSetSummary {
   topic: string | null;
   /** Whether the signed-in user may edit it (owner, or admin for shared sets). */
   canEdit: boolean;
+  /** Whether the signed-in user created it (only the creator can share / unshare). */
+  isMine: boolean;
   status: SetStatus;
   extractionStatus: "pending" | "processing" | "completed" | "failed";
   extractionError: string | null;
@@ -138,6 +140,8 @@ export interface HomeworkSetDetail extends HomeworkSetSummary {
   attemptCount: number;
   /** Short-lived signed URLs for questionData.figurePath values. */
   figureUrls: Record<string, string>;
+  /** Whether the person viewing is an admin (can share their own homework). */
+  viewerIsAdmin: boolean;
 }
 
 /* ------------------------------------------------------------------ */

@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Button, ConfirmDialog, EmptyState, ErrorBanner, inputClass, PageHeader, Pill, Spinner } from "@/components/ui";
+import { Button, ConfirmDialog, EmptyState, ErrorBanner, inputClass, PageHeader, Pill, Spinner, SuccessBanner } from "@/components/ui";
 import { errorMessage, fetchJson } from "@/lib/client/fetchJson";
 import { HomeworkSetSummary, SCHOOL_YEARS, WEEKS } from "@/lib/library/types";
 import { openOriginalFile } from "./openOriginalFile";
+import { makePrivate, ShareDialog } from "./ShareDialog";
 
 export function StatusPill({ status }: { status: HomeworkSetSummary["status"] }) {
   if (status === "published") return <Pill tone="green">● Published</Pill>;
@@ -25,6 +26,9 @@ export default function LibraryList({ initialScope = "mine" }: { initialScope?: 
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toDelete, setToDelete] = useState<HomeworkSetSummary | null>(null);
+  const [toShare, setToShare] = useState<HomeworkSetSummary | null>(null);
+  const [toUnshare, setToUnshare] = useState<HomeworkSetSummary | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
@@ -75,6 +79,23 @@ export default function LibraryList({ initialScope = "mine" }: { initialScope?: 
       await load();
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function confirmUnshare() {
+    if (!toUnshare) return;
+    setBusyId(toUnshare.id);
+    setError(null);
+    try {
+      await makePrivate(toUnshare.id);
+      setNotice(`"${toUnshare.title}" is private again. It's back in My homework.`);
+      setToUnshare(null);
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+      setToUnshare(null);
     } finally {
       setBusyId(null);
     }
@@ -191,6 +212,11 @@ export default function LibraryList({ initialScope = "mine" }: { initialScope?: 
           <ErrorBanner message={error} onRetry={load} />
         </div>
       )}
+      {notice && (
+        <div className="mb-4">
+          <SuccessBanner message={notice} />
+        </div>
+      )}
 
       {sets === null && !error && <Spinner label="Loading homework…" />}
 
@@ -265,6 +291,16 @@ export default function LibraryList({ initialScope = "mine" }: { initialScope?: 
                         Publish
                       </Button>
                     ))}
+                  {isAdmin && set.isMine && set.visibility === "private" && (
+                    <Button variant="ghost" size="sm" className="text-emerald-700" onClick={() => setToShare(set)}>
+                      🌍 Share with everyone
+                    </Button>
+                  )}
+                  {set.isMine && set.visibility === "shared" && (
+                    <Button variant="ghost" size="sm" onClick={() => setToUnshare(set)}>
+                      Make private
+                    </Button>
+                  )}
                   {set.canEdit && (
                     <Button variant="ghost" size="sm" className="text-rose-700" onClick={() => setToDelete(set)}>
                       Delete
@@ -276,6 +312,30 @@ export default function LibraryList({ initialScope = "mine" }: { initialScope?: 
           ))}
         </ul>
       )}
+
+      {toShare && (
+        <ShareDialog
+          set={toShare}
+          onCancel={() => setToShare(null)}
+          onDone={(shared) => {
+            setNotice(`"${shared.title}" is now in the shared library under ${shared.topic}.`);
+            setToShare(null);
+            void load();
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        open={toUnshare !== null}
+        title="Make this private again?"
+        confirmLabel="Make private"
+        busy={busyId === toUnshare?.id}
+        onConfirm={() => void confirmUnshare()}
+        onCancel={() => setToUnshare(null)}
+      >
+        <strong>{toUnshare?.title}</strong> will leave the shared library and go back to your own homework. Other
+        families won&apos;t see it any more. (If other children have already practised it, it has to stay shared - unpublish it instead.)
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={toDelete !== null}
