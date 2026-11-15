@@ -1,6 +1,6 @@
 import { createUserContent, type Part } from "@google/genai";
 import { z } from "zod";
-import { gemini, GEMINI_HOMEWORK_MODEL, withGeminiRetry } from "@/lib/gemini";
+import { gemini, GEMINI_HOMEWORK_MODEL, withGeminiRetry, USER_ACTION_ATTEMPTS } from "@/lib/gemini";
 import { HomeworkError } from "@/lib/homework/errors";
 import { toGeminiPart, type ValidatedImage } from "@/lib/homework/image";
 import { figureKey, normaliseBox, type FigureRequest } from "./figures";
@@ -131,7 +131,7 @@ async function extractChunk(parts: Part[], prompt: string) {
             abortSignal: AbortSignal.timeout(CHUNK_TIMEOUT_MS),
           },
         }),
-      { maxAttempts: 3, label: "Extraction" }
+      { maxAttempts: USER_ACTION_ATTEMPTS, label: "Extraction" }
     );
     return validateExtraction(parseModelJson(response.text));
   };

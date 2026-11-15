@@ -39,6 +39,19 @@ const delay = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * Wait before retry `attempt` (1-based): ~1s, ~3s, ~6s… plus up to 30% random
+ * jitter so many requests hitting the same overload spike don't retry together.
+ * Gemini "high demand" (503) spikes usually clear within a few seconds.
+ */
+export function retryDelayMs(attempt: number, random: () => number = Math.random): number {
+  const base = [1000, 3000, 6000][attempt - 1] ?? 6000;
+  return Math.round(base * (1 + 0.3 * random()));
+}
+
+/** Attempts for actions a child is waiting on (marking, checking, hints): ~10s of retries at most. */
+export const USER_ACTION_ATTEMPTS = 4;
+
+/**
  * Runs a Gemini call with bounded exponential backoff on temporary errors.
  * Never retries indefinitely: at most `maxAttempts` calls are made.
  */
@@ -54,7 +67,7 @@ export async function withGeminiRetry<T>(
         throw error;
       }
 
-      const waitTime = 1000 * Math.pow(2, attempt - 1);
+      const waitTime = retryDelayMs(attempt);
       console.log(
         `${label} error ${getGeminiErrorStatus(error)}. Retry ${attempt + 1}/${maxAttempts} in ${waitTime}ms`
       );

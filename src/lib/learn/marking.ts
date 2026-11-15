@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { gemini, GEMINI_MODEL, withGeminiRetry } from "@/lib/gemini";
+import { gemini, GEMINI_MODEL, withGeminiRetry, USER_ACTION_ATTEMPTS } from "@/lib/gemini";
 import { compareAnswers, normaliseText, revealsAnswer } from "@/lib/homework/answerCompare";
 import { InvalidModelResponseError, parseModelJson, toGeminiJsonSchema, toSecondPerson } from "@/lib/homework/validation";
 import type { MarkingCriteria, QuestionData, QuestionType, SectionSubject } from "@/lib/library/types";
@@ -222,7 +222,7 @@ async function markBatchWithGemini(items: { q: MarkableQuestion; answer: string;
             abortSignal: AbortSignal.timeout(90_000),
           },
         }),
-      { maxAttempts: 2, label: "Marking" }
+      { maxAttempts: USER_ACTION_ATTEMPTS, label: "Marking" }
     );
     const parsed = geminiMarkSchema.safeParse(parseModelJson(response.text));
     if (!parsed.success) throw new InvalidModelResponseError("marking shape mismatch");

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --import tsx --test src/lib/homework/homework.test.ts src/lib/learn/marking.test.ts src/lib/learn/grouping.test.ts src/lib/library/extraction.test.ts src/lib/learn/checking.test.ts src/lib/library/figures.test.ts src/lib/learn/history.test.ts"
+    "test": "node --import tsx --test src/lib/homework/homework.test.ts src/lib/learn/marking.test.ts src/lib/learn/grouping.test.ts src/lib/library/extraction.test.ts src/lib/learn/checking.test.ts src/lib/library/figures.test.ts src/lib/learn/history.test.ts src/lib/gemini.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.32.0",

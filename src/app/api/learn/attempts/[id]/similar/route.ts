@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { assertUuid, ok, readJson, route } from "@/lib/api";
-import { gemini, GEMINI_MODEL, withGeminiRetry } from "@/lib/gemini";
+import { gemini, GEMINI_MODEL, withGeminiRetry, USER_ACTION_ATTEMPTS } from "@/lib/gemini";
 import { HomeworkError } from "@/lib/homework/errors";
 import { sealPracticeToken } from "@/lib/homework/practiceToken";
 import { geminiPracticeSchema } from "@/lib/homework/types";
@@ -66,7 +66,7 @@ export const POST = route(
             abortSignal: AbortSignal.timeout(45_000),
           },
         }),
-      { maxAttempts: 2, label: "Similar question" }
+      { maxAttempts: USER_ACTION_ATTEMPTS, label: "Similar question" }
     );
 
     const parsed = geminiPracticeSchema.safeParse(parseModelJson(response.text));

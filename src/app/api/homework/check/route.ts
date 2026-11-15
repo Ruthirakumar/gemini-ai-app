@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createUserContent } from "@google/genai";
-import { gemini, GEMINI_HOMEWORK_MODEL, withGeminiRetry } from "@/lib/gemini";
+import { gemini, GEMINI_HOMEWORK_MODEL, withGeminiRetry, USER_ACTION_ATTEMPTS } from "@/lib/gemini";
 import { SUBJECT_OPTIONS, SubjectOption } from "@/lib/homework/constants";
 import { HomeworkError, toErrorResponse } from "@/lib/homework/errors";
 import { toGeminiPart, validateUploadedImages, ValidatedImage } from "@/lib/homework/image";
@@ -52,7 +52,7 @@ async function askGemini(images: ValidatedImage[], subject: SubjectOption) {
           abortSignal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
         },
       }),
-    { maxAttempts: 2, label: "Homework check" }
+    { maxAttempts: USER_ACTION_ATTEMPTS, label: "Homework check" }
   );
 
   return validateHomeworkResponse(parseModelJson(response.text));

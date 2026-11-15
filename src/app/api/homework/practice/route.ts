@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { gemini, GEMINI_MODEL, withGeminiRetry } from "@/lib/gemini";
+import { gemini, GEMINI_MODEL, withGeminiRetry, USER_ACTION_ATTEMPTS } from "@/lib/gemini";
 import { compareAnswers, revealsAnswer } from "@/lib/homework/answerCompare";
 import { MAX_PRACTICE_ATTEMPTS } from "@/lib/homework/constants";
 import { HomeworkError, toErrorResponse } from "@/lib/homework/errors";
@@ -62,7 +62,7 @@ async function judgeWithGemini(
             abortSignal: AbortSignal.timeout(30_000),
           },
         }),
-      { maxAttempts: 2, label: "Practice judge" }
+      { maxAttempts: USER_ACTION_ATTEMPTS, label: "Practice judge" }
     );
     const parsed = geminiPracticeJudgementSchema.safeParse(parseModelJson(response.text));
     return parsed.success ? parsed.data : null;
