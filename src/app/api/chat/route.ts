@@ -1,61 +1,40 @@
-import { NextRequest, NextResponse } from "next/server";
-import {
-  gemini,
-  GEMINI_MODEL,
-  getGeminiErrorStatus,
-  isRetryableGeminiError,
-  withGeminiRetry,
-} from "@/lib/gemini";
+import { HarmBlockThreshold, HarmCategory } from "@google/genai";
+import { NextRequest } from "next/server";
+import { ok, readJson, route } from "@/lib/api";
+import { askRequestSchema, buildContents, FALLBACK_REPLY, TUTOR_SYSTEM_INSTRUCTION } from "@/lib/ask/conversation";
+import { gemini, GEMINI_MODEL, USER_ACTION_ATTEMPTS, withGeminiRetry } from "@/lib/gemini";
 
-async function generateWithRetry(message: string) {
-  return withGeminiRetry(() =>
-    gemini.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: message,
-    })
+// Stricter than Gemini's defaults: the people asking are 7-9 years old.
+const SAFETY_SETTINGS = [
+  HarmCategory.HARM_CATEGORY_HARASSMENT,
+  HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+  HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+  HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+].map((category) => ({ category, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE }));
+
+/**
+ * POST { message, history } – the Ask tab. `history` is the last few messages of
+ * this conversation (kept only in the browser, never stored) so follow-up
+ * questions make sense.
+ */
+export const POST = route("ask", async (request: NextRequest) => {
+  const { message, history } = await readJson(request, askRequestSchema);
+
+  const response = await withGeminiRetry(
+    () =>
+      gemini.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: buildContents(history, message),
+        config: {
+          systemInstruction: TUTOR_SYSTEM_INSTRUCTION,
+          temperature: 0.6,
+          maxOutputTokens: 600,
+          safetySettings: SAFETY_SETTINGS,
+        },
+      }),
+    { maxAttempts: USER_ACTION_ATTEMPTS, label: "Ask" }
   );
-}
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const message = body.message;
-
-    if (typeof message !== "string" || !message.trim()) {
-      return NextResponse.json(
-        { error: "Please provide a valid message." },
-        { status: 400 }
-      );
-    }
-
-    if (message.length > 10000) {
-      return NextResponse.json(
-        { error: "Message is too long." },
-        { status: 400 }
-      );
-    }
-
-    const response = await generateWithRetry(message);
-
-    return NextResponse.json({
-      success: true,
-      reply: response.text ?? "No response generated.",
-    });
-
-  } catch (error: unknown) {
-    console.error("Gemini API error:", error);
-
-    const status = getGeminiErrorStatus(error);
-    const isTemporary = isRetryableGeminiError(error);
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: isTemporary
-          ? "Gemini is temporarily unavailable. Please try again shortly."
-          : "Unable to generate a response. Please try again.",
-      },
-      { status: isTemporary ? status : 500 }
-    );
-  }
-}
+  const reply = response.text?.trim();
+  return ok({ reply: reply || FALLBACK_REPLY });
+});
