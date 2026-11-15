@@ -4,14 +4,19 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openOriginalFile } from "@/components/library/openOriginalFile";
+import MicButton from "@/components/speech/MicButton";
+import { ReadAloudButton, useSpeech } from "@/components/speech/SpeechProvider";
 import { Button, ConfirmDialog, ErrorBanner, Pill } from "@/components/ui";
 import { ApiClientError, errorMessage, fetchJson } from "@/lib/client/fetchJson";
 import { navigate } from "@/lib/client/navigate";
 import { groupQuestions, partLabel, type QuestionGroup } from "@/lib/learn/grouping";
+import { findSpellingList, isDictionarySection, isSingleWordStem } from "@/lib/learn/spelling";
 import type { AttemptProgress, AttemptView, CheckView, PracticeQuestionView } from "@/lib/learn/types";
 import AnswerInput from "./AnswerInput";
-import CheckFeedback from "./CheckFeedback";
+import AskAboutQuestion from "./AskAboutQuestion";
+import CheckFeedback, { checkToSpeech } from "./CheckFeedback";
 import QuestionFigure from "./QuestionFigure";
+import SpellingDictation from "./SpellingDictation";
 
 interface Props {
   attempt: AttemptView;
@@ -27,6 +32,8 @@ interface Screen {
 }
 
 const isAnswerable = (q: PracticeQuestionView) => q.questionType !== "not_digital";
+/** Answers a child can say instead of type. */
+const isSpeakable = (q: PracticeQuestionView) => q.questionType === "short_text" || q.questionType === "long_text";
 
 export default function PracticeRunner({ attempt, onMarked }: Props) {
   const screens = useMemo<Screen[]>(
@@ -52,6 +59,7 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
   const [checks, setChecks] = useState<Record<string, CheckView>>(attempt.checks);
   const [checking, setChecking] = useState(false);
   const [checkNotice, setCheckNotice] = useState<string | null>(null);
+  const speech = useSpeech();
 
   const pending = useRef(new Map<string, string>());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -120,6 +128,7 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
     setIndex(clamped);
     setReviewing(false);
     setCheckNotice(null);
+    speech.stop();
     progressRef.current = { ...progressRef.current, currentQuestionId: screens[clamped]?.group.parts[0]?.id ?? null };
     void flush();
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -162,6 +171,15 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
         json: { answers: filled.map((p) => ({ questionId: p.id, answer: answers[p.id] })) },
       });
       setChecks((prev) => ({ ...prev, ...Object.fromEntries(data.checks.map((c) => [c.questionId, c])) }));
+      if (speech.autoRead && data.checks.length > 0) {
+        const multiPart = current.group.parts.length > 1;
+        const lines = current.group.parts.flatMap((p, i) => {
+          const view = data.checks.find((c) => c.questionId === p.id);
+          if (!view) return [];
+          return [...(multiPart ? [`Part ${partLabel(current.group, i, p)}.`] : []), ...checkToSpeech(view)];
+        });
+        speech.speak(lines, `screen-${index}-feedback`);
+      }
       const left = parts.length - filled.length;
       if (left > 0) setCheckNotice(`${left} part${left === 1 ? " is" : "s are"} still empty - have a go and check again.`);
       void flush(); // saves position
@@ -244,6 +262,43 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
   const answerableParts = group?.parts.filter(isAnswerable) ?? [];
   const canCheck = answerableParts.some((p) => !isLocked(p));
   const screenDone = answerableParts.length > 0 && answerableParts.every(isLocked);
+  // Voice: spelling lists become a read-aloud test; one-word stems (dictionary work) can be heard.
+  const spelling =
+    group && section && group.parts.length === 1
+      ? findSpellingList({
+          questionText: group.parts[0].questionText,
+          questionType: group.parts[0].questionType,
+          topic: group.parts[0].data.topic,
+          sectionTitle: section.sectionTitle,
+          instructions: section.instructions,
+        })
+      : null;
+  const wordStem = group && isSingleWordStem(group.stem) ? group.stem.trim() : null;
+  const dictionary = !!section && isDictionarySection(section.sectionTitle, section.instructions);
+  const questionSpeech = group
+    ? [group.stem ?? "", ...group.parts.map((p, i) => (multi ? `${partLabel(group, i, p)}. ${p.questionText}` : p.questionText))].filter(Boolean)
+    : [];
+
+  const answerExtras = (part: PracticeQuestionView) => (
+    <>
+      {isSpeakable(part) && !isLocked(part) && (
+        <div className="mt-2">
+          <MicButton
+            disabled={checking}
+            label={part.questionType === "long_text" ? "Say your answer" : "Say it"}
+            onText={(text) => {
+              const before = answers[part.id]?.trim();
+              setAnswer(part.id, before ? `${before} ${text}` : text);
+            }}
+          />
+        </div>
+      )}
+      {checks[part.id] && <CheckFeedback check={checks[part.id]} />}
+      {checks[part.id] && checks[part.id].state !== "needs_review" && (
+        <AskAboutQuestion key={part.id} attemptId={attempt.id} questionId={part.id} />
+      )}
+    </>
+  );
 
   return (
     <div className="space-y-5">
@@ -268,6 +323,20 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
             <span className="text-sm text-slate-500" aria-live="polite">
               {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved" : saveState === "error" ? "Not saved yet" : ""}
             </span>
+            {speech.supported && (
+              <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 accent-indigo-600"
+                  checked={speech.autoRead}
+                  onChange={(e) => {
+                    speech.setAutoRead(e.target.checked);
+                    if (!e.target.checked) speech.stop();
+                  }}
+                />
+                🔊 Read feedback aloud
+              </label>
+            )}
             <button type="button" onClick={() => setConfirmDiscard(true)} className="text-xs font-semibold text-rose-700 hover:underline">
               Discard and start over
             </button>
@@ -358,8 +427,8 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
             <Pill tone="indigo">{section.subject}</Pill>
             <h2 className="text-lg font-bold text-slate-900">{section.sectionTitle}</h2>
           </div>
-          {section.instructions && (
-            <p className="mt-3 whitespace-pre-line rounded-2xl bg-slate-50 px-4 py-3 text-slate-700">{section.instructions}</p>
+          {(spelling ? spelling.intro : section.instructions) && (
+            <p className="mt-3 whitespace-pre-line rounded-2xl bg-slate-50 px-4 py-3 text-slate-700">{spelling ? spelling.intro : section.instructions}</p>
           )}
 
           {/* Main question: number + shared instruction/data */}
@@ -368,7 +437,15 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
               {group.label}
             </span>
             <div className="min-w-0 flex-1">
-              {multi ? (
+              {spelling ? (
+                <p className="text-xl font-medium leading-relaxed text-slate-900">Learn your {spelling.words.length} spellings</p>
+              ) : wordStem ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-3xl font-bold text-slate-900">{wordStem}</p>
+                  <ReadAloudButton text={wordStem} id={`word-${group.label}`} label="Hear the word" className="!text-base ring-1 ring-indigo-200" />
+                  <ReadAloudButton text={wordStem} id={`word-slow-${group.label}`} label="Slowly" rate={0.6} />
+                </div>
+              ) : multi ? (
                 group.stem && <p className="whitespace-pre-line text-xl font-medium leading-relaxed text-slate-900">{group.stem}</p>
               ) : (
                 <>
@@ -378,6 +455,12 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
                 </>
               )}
               {multi && <p className="mt-1 text-sm text-slate-500">{group.parts.length} parts</p>}
+              {wordStem && dictionary && (
+                <p className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-sky-900 ring-1 ring-sky-200">
+                  ✏️ Write <strong>{wordStem}</strong> on your paper, look it up in your dictionary, then answer below.
+                </p>
+              )}
+              {!spelling && !wordStem && <ReadAloudButton text={questionSpeech} id={`question-${index}`} label="Read the question" className="-ml-2 mt-1" />}
             </div>
           </div>
 
@@ -422,10 +505,14 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
                     </div>
                   )}
                   <AnswerInput question={part} value={answers[part.id] ?? ""} onChange={(v) => setAnswer(part.id, v)} disabled={isLocked(part) || checking} />
-                  {checks[part.id] && <CheckFeedback check={checks[part.id]} />}
+                  {answerExtras(part)}
                 </li>
               ))}
             </ol>
+          ) : spelling ? (
+            <div className="mt-6">
+              <SpellingDictation key={group.parts[0].id} id={group.parts[0].id} list={spelling} />
+            </div>
           ) : (
             <div className="mt-6">
               {group.parts[0].data.visualReference && !group.parts[0].figureUrl && (
@@ -438,7 +525,7 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
                 onChange={(v) => setAnswer(group.parts[0].id, v)}
                 disabled={isLocked(group.parts[0]) || checking}
               />
-              {checks[group.parts[0].id] && <CheckFeedback check={checks[group.parts[0].id]} />}
+              {answerExtras(group.parts[0])}
             </div>
           )}
 

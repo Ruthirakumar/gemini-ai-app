@@ -56,6 +56,7 @@ Marking rules:
 - Use the answer key and markingCriteria, but think for yourself: accept answers that are genuinely correct even if not listed (synonyms, equivalent fractions/decimals, money written as pence or pounds, units written differently, different wording with the same meaning for comprehension or definitions).
 - Maths: accept mathematically equivalent answers. A different valid method is fine. Award partial marks only when the item has more than 1 mark and the answer shows real partial understanding (as described in markingCriteria).
 - English: when the item tests spelling, the spelling must be exact. When it tests capital letters or punctuation, those must be right. Otherwise ignore small spelling slips if the meaning is clearly right (you may gently mention them).
+- Word meanings / definitions: accept the child's own words when they capture the main idea. Answers may have been spoken aloud and turned into text, so ignore missing capitals and punctuation and obvious speech-recognition slips. In the explanation, explain the meaning in simple words and give one short example sentence using the word. For a wrong meaning, the hint may use the word in an example sentence but must not give the meaning.
 - Multiple choice: compare the chosen option(s) with the key. Order does not matter.
 - status "needs_review" only if the answer key itself looks wrong or the item cannot be judged fairly. Never use it just because the child is wrong.
 - awardedMarks: full marks for correct, 0 for incorrect, in between for partially_correct.

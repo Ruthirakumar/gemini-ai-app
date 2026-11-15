@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { SpeechProvider } from "@/components/speech/SpeechProvider";
 import { ErrorBanner, Spinner } from "@/components/ui";
 import { errorMessage, fetchJson } from "@/lib/client/fetchJson";
 import type { AttemptView } from "@/lib/learn/types";
@@ -27,15 +28,19 @@ export default function AttemptScreen({ attemptId }: { attemptId: string }) {
     return error ? <ErrorBanner message={error} onRetry={() => { setError(null); setReload((n) => n + 1); }} /> : <Spinner label="Opening your homework…" />;
   }
 
-  if (attempt.status === "completed") return <AttemptResults attempt={attempt} />;
-
   return (
-    <PracticeRunner
-      attempt={attempt}
-      onMarked={(marked) => {
-        setAttempt(marked);
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }}
-    />
+    <SpeechProvider>
+      {attempt.status === "completed" ? (
+        <AttemptResults attempt={attempt} />
+      ) : (
+        <PracticeRunner
+          attempt={attempt}
+          onMarked={(marked) => {
+            setAttempt(marked);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
+      )}
+    </SpeechProvider>
   );
 }

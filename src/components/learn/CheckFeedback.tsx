@@ -1,6 +1,30 @@
 "use client";
 
+import { ReadAloudButton } from "@/components/speech/SpeechProvider";
 import type { CheckView } from "@/lib/learn/types";
+
+/** What Buddy says when reading a check result aloud. */
+export function checkToSpeech(check: CheckView): string[] {
+  switch (check.state) {
+    case "correct":
+      return [check.feedback || "Correct!", check.explanation && check.explanation !== check.feedback ? check.explanation : ""].filter(Boolean);
+    case "try_again":
+      return [check.feedback, check.hint ? `Here's a hint. ${check.hint}` : ""].filter(Boolean);
+    case "needs_review":
+      return [check.feedback || "A grown-up will check this one with you."];
+    default:
+      return [
+        check.feedback,
+        check.correctAnswer ? `The answer is ${check.correctAnswer}.` : "",
+        check.explanation ?? "",
+        ...check.workingSteps,
+      ].filter(Boolean);
+  }
+}
+
+const ReadIt = ({ check }: { check: CheckView }) => (
+  <ReadAloudButton text={checkToSpeech(check)} id={`check-${check.questionId}`} className="-ml-2 mt-1" />
+);
 
 /** Shows the result of checking one answer while practising. */
 export default function CheckFeedback({ check }: { check: CheckView }) {
@@ -10,6 +34,7 @@ export default function CheckFeedback({ check }: { check: CheckView }) {
         <p className="font-semibold">✓ {check.feedback || "Correct!"}</p>
         {check.triesUsed > 1 && <p className="mt-1 text-sm">You fixed it on try {check.triesUsed} - great perseverance! 💪</p>}
         {check.explanation && check.explanation !== check.feedback && <p className="mt-1 text-sm">{check.explanation}</p>}
+        <ReadIt check={check} />
       </div>
     );
   }
@@ -27,6 +52,7 @@ export default function CheckFeedback({ check }: { check: CheckView }) {
         <p className="mt-1 text-xs text-amber-800">
           Change your answer and check again · {check.triesLeft} {check.triesLeft === 1 ? "try" : "tries"} left
         </p>
+        <ReadIt check={check} />
       </div>
     );
   }
@@ -56,6 +82,7 @@ export default function CheckFeedback({ check }: { check: CheckView }) {
           ))}
         </ol>
       )}
+      <ReadIt check={check} />
     </div>
   );
 }

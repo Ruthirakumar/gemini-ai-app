@@ -4,7 +4,8 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Button, ErrorBanner, inputClass, PageHeader } from "@/components/ui";
 import { HISTORY_LIMIT, MAX_QUESTION_LENGTH, type ChatMessage } from "@/lib/ask/conversation";
 import { errorMessage, fetchJson } from "@/lib/client/fetchJson";
-import { useSpeechRecognition, useSpeechSynthesis, type ListenError } from "@/lib/client/useSpeech";
+import { LISTEN_ERRORS } from "@/lib/client/listenErrors";
+import { useSpeechRecognition, useSpeechSynthesis } from "@/lib/client/useSpeech";
 
 interface Message extends ChatMessage {
   id: string;
@@ -13,15 +14,6 @@ interface Message extends ChatMessage {
 type Mode = "talk" | "type";
 
 const STARTERS = ["What is 7 times 8?", "Why do leaves change colour in autumn?", "What is a noun?", "How do I find a quarter of 20?"];
-
-const LISTEN_ERRORS: Record<ListenError, string> = {
-  "not-allowed":
-    "Homework Buddy isn't allowed to use the microphone. Ask a grown-up to click the padlock next to the web address, allow the microphone, then try again. Or switch to typing.",
-  "no-speech": "I didn't hear anything. Tap the microphone and try again, a little louder.",
-  "audio-capture": "No microphone was found. Check one is plugged in and switched on, or switch to typing.",
-  network: "Talking needs the internet in this browser and it couldn't connect. Please try again, or switch to typing.",
-  unknown: "Something went wrong with listening. Please try again, or switch to typing.",
-};
 
 let nextId = 0;
 const newId = () => `m${++nextId}`;

@@ -222,20 +222,21 @@ export function useSpeechSynthesis({ rate = 0.95 }: { rate?: number } = {}) {
     setSpeakingId(null);
   }, []);
 
+  /** Reads `text` aloud (an array is read as separate phrases with a short pause between). */
   const speak = useCallback(
-    (text: string, id: string) => {
+    (text: string | string[], id: string, options: { rate?: number } = {}) => {
       if (!("speechSynthesis" in window)) return;
       const synth = window.speechSynthesis;
       const run = ++runRef.current;
       synth.cancel();
 
-      const pieces = splitForSpeech(toSpeakableText(text));
+      const pieces = (Array.isArray(text) ? text : [text]).flatMap((t) => splitForSpeech(toSpeakableText(t)));
       if (pieces.length === 0) return;
       pieces.forEach((piece, i) => {
         const utterance = new SpeechSynthesisUtterance(piece);
         utterance.lang = voice?.lang ?? "en-GB";
         if (voice) utterance.voice = voice;
-        utterance.rate = rate;
+        utterance.rate = options.rate ?? rate;
         utterance.pitch = 1.05;
         const finish = () => {
           if (runRef.current !== run) return;
