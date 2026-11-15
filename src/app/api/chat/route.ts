@@ -28,7 +28,7 @@ export const POST = route("ask", async (request: NextRequest) => {
         config: {
           systemInstruction: TUTOR_SYSTEM_INSTRUCTION,
           temperature: 0.6,
-          maxOutputTokens: 600,
+          maxOutputTokens: 2048,
           safetySettings: SAFETY_SETTINGS,
         },
       }),
@@ -36,5 +36,6 @@ export const POST = route("ask", async (request: NextRequest) => {
   );
 
   const reply = response.text?.trim();
+  if (!reply) console.warn("[ask] empty reply", { finishReason: response.candidates?.[0]?.finishReason, blocked: response.promptFeedback?.blockReason });
   return ok({ reply: reply || FALLBACK_REPLY });
 });

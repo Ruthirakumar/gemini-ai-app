@@ -30,6 +30,21 @@ describe("applyCheck", () => {
     assert.deepEqual([row.first_status, row.first_marks, row.locked], ["incorrect", 0, false]);
   });
 
+  it("wrong meaning: feedback that re-words the definition is replaced, a fair hint is kept", () => {
+    const { view } = applyCheck(
+      EMPTY_CHECK,
+      outcome("incorrect", {
+        correctAnswer: "Of a door, slightly open.",
+        feedback: "Good try! Ajar means a door is slightly open.",
+        hint: "Think about what you do to a door when you want a little fresh air.",
+      }),
+      ["Of a door, slightly open."]
+    );
+    assert.equal(view.state, "try_again");
+    assert.ok(!/slightly open/i.test(view.feedback), view.feedback);
+    assert.equal(view.hint, "Think about what you do to a door when you want a little fresh air.");
+  });
+
   it("fixed on the second try: shows the answer, keeps the first-try score, marks as corrected", () => {
     const first = applyCheck(EMPTY_CHECK, outcome("incorrect"), HIDE).row;
     const { row, view } = applyCheck(first, outcome("correct"), HIDE);

@@ -31,6 +31,34 @@ export const EMPTY_CHECK: StoredCheck = {
   working_steps: null,
 };
 
+const STOP_WORDS = new Set([
+  "the", "and", "for", "with", "that", "this", "from", "you", "are", "was", "were", "its", "it's", "has", "have", "not",
+  "but", "can", "something", "someone", "thing", "being", "into", "very", "when", "what", "which", "who", "your", "their",
+]);
+const contentWords = (text: string) =>
+  new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9' ]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !STOP_WORDS.has(w))
+  );
+
+/**
+ * Catches feedback that re-words a multi-word answer, e.g. a definition
+ * ("Ajar means a door is slightly open" for "Of a door, slightly open"):
+ * most of the answer's key words appear in the text.
+ */
+export function paraphrasesAnswer(text: string, answers: string[]): boolean {
+  const said = contentWords(text);
+  return answers.some((answer) => {
+    const key = [...contentWords(answer)];
+    if (key.length < 2) return false;
+    const hits = key.filter((w) => said.has(w) || said.has(w.replace(/s$/, "")) || said.has(`${w}s`)).length;
+    return hits >= 2 && hits / key.length >= 0.6;
+  });
+}
+
 const KEEP_TRYING = [
   "Not quite yet - have another go!",
   "Nearly! Have another look.",
@@ -57,7 +85,8 @@ export function applyCheck(prev: StoredCheck, outcome: MarkOutcome, answersToHid
   else state = tries >= MAX_CHECK_TRIES ? "revealed" : "try_again";
 
   const showAnswer = state === "correct" || state === "revealed";
-  const safe = (text: string | null) => (text && !revealsAnswer(text, answersToHide) ? text : null);
+  const safe = (text: string | null) =>
+    text && !revealsAnswer(text, answersToHide) && !paraphrasesAnswer(text, answersToHide) ? text : null;
 
   const feedback =
     state === "correct"
