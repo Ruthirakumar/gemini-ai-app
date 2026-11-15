@@ -171,3 +171,17 @@ export function compareAnswers(
   // Only a definite mismatch if every parseable candidate compared and differed.
   return anyDecided ? "mismatch" : "unknown";
 }
+
+/**
+ * True if `text` (a hint or feedback) contains any of the answers as a whole
+ * word or phrase - used to stop hints giving the answer away.
+ */
+export function revealsAnswer(text: string | null | undefined, answers: string[]): boolean {
+  if (!text) return false;
+  const clean = (value: string) => normaliseText(value).replace(/[^a-z0-9./ ]/g, " ").replace(/\s+/g, " ").trim();
+  const haystack = ` ${clean(text)} `;
+  return answers.some((answer) => {
+    const needle = clean(answer);
+    return needle.length > 0 && haystack.includes(` ${needle} `);
+  });
+}

@@ -21,8 +21,21 @@ export const PUT = route(
       throw new HomeworkError(409, "already_submitted", "This homework has already been handed in.");
     }
 
-    if (body.answers.length > 0) {
-      const rows = body.answers.map((a) => ({
+    // Questions already finished by checking (correct or revealed) can't change.
+    let editable = body.answers;
+    if (editable.length > 0) {
+      const { data: lockedRows, error: lockedError } = await supabase
+        .from("student_answers")
+        .select("question_id")
+        .eq("attempt_id", id)
+        .eq("locked", true);
+      if (lockedError) dbError("loadLocked", lockedError);
+      const locked = new Set((lockedRows ?? []).map((r) => r.question_id as string));
+      editable = editable.filter((a) => !locked.has(a.questionId));
+    }
+
+    if (editable.length > 0) {
+      const rows = editable.map((a) => ({
         attempt_id: id,
         question_id: a.questionId,
         student_answer: a.answer.trim() ? a.answer : null,

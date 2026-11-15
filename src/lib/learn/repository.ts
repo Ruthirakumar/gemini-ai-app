@@ -9,11 +9,12 @@ import {
   SetSubject,
 } from "@/lib/library/types";
 import { computeScore, MarkableQuestion } from "./marking";
+import { StoredCheck, toCheckView } from "./checking";
 import {
   attemptProgressSchema,
+  CheckView,
   AttemptSummary,
   AttemptView,
-  MarkingStatus,
   PracticeSectionView,
   QuestionResult,
   StudentProfile,
@@ -150,24 +151,24 @@ export async function getAttemptView(supabase: SupabaseClient, attemptId: string
 
   const { data: answerRows, error: answersError } = await supabase
     .from("student_answers")
-    .select("question_id, student_answer, marking_status, awarded_marks, correct_answer, feedback, explanation, working_steps")
+    .select(
+      "question_id, student_answer, marking_status, awarded_marks, correct_answer, feedback, explanation, working_steps, check_count, first_status, first_marks, locked, hint, corrected"
+    )
     .eq("attempt_id", attemptId);
   if (answersError) dbError("attemptAnswers", answersError);
 
-  type AnswerRow = {
+  type AnswerRow = StoredCheck & {
     question_id: string;
     student_answer: string | null;
-    marking_status: MarkingStatus | null;
     awarded_marks: number | null;
-    correct_answer: string | null;
-    feedback: string | null;
-    explanation: string | null;
-    working_steps: unknown;
+    corrected: boolean;
   };
 
   const answers: Record<string, string> = {};
+  const checks: Record<string, CheckView> = {};
   for (const row of (answerRows ?? []) as AnswerRow[]) {
     if (row.student_answer) answers[row.question_id] = row.student_answer;
+    if (attempt.status !== "completed" && row.check_count > 0) checks[row.question_id] = toCheckView(row.question_id, row);
   }
 
   let results: AttemptView["results"] = null;
@@ -187,6 +188,8 @@ export async function getAttemptView(supabase: SupabaseClient, attemptId: string
         feedback: row.feedback,
         explanation: row.explanation,
         workingSteps: Array.isArray(row.working_steps) ? (row.working_steps as string[]) : [],
+        corrected: row.corrected,
+        triesUsed: row.check_count,
       } satisfies QuestionResult;
     }
     const list = Object.values(results);
@@ -216,6 +219,7 @@ export async function getAttemptView(supabase: SupabaseClient, attemptId: string
     },
     sections: practiceSections,
     answers,
+    checks,
     progress: progress.success ? progress.data : { currentQuestionId: null, submittedSections: [] },
     startedAt: attempt.started_at,
     submittedAt: attempt.submitted_at,

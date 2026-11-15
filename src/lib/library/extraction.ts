@@ -33,10 +33,15 @@ The sheets are usually BLANK (not yet answered). If a child has written answers,
 - sectionTitle: short and clear, e.g. "Maths Paper 8 - Q1 Angles", "Reasoning - Q2 Odd ones out", "Spellings Week 8".
 - instructions: the instructions exactly as printed, plus any shared material the child needs to answer (word boxes, price lists, short passages). Do not include answers.
 
-## One item per answer box
-- Create ONE question item for every separate answer the child must give. Split subparts: "9a", "9b"; "15a" ... "15q"; each row of a table cell to fill ("7 cylinder - name", "7 cylinder - faces", ...); each angle/triangle/shape to name ("1 - angle 1", "1 - angle 2" or "1a", "1b" ...).
-- Keep printed numbering. When the sheet re-uses numbers (e.g. a second "1." later), add letters or a suffix so numbers stay unique within the section (e.g. "Extra 1").
-- For subparts, set parentNumber and put the shared stem/data in parentText.
+## Main questions and sub-questions
+- A MAIN question is one printed number with its instruction (e.g. "5. Calculate the following:"). Its separate answer boxes are SUB-QUESTIONS.
+- Create ONE item per answer box. Number sub-questions with the main number plus a letter in reading order: "5a", "5b", "5c", "5d" - even when the sheet doesn't print letters. Never use styles like "5 - 1" or "5-2".
+- For EVERY sub-question set parentNumber to the main number ("5") and put the shared instruction plus any shared data (price list, word box, passage) in parentText, identical for all its parts.
+- A main question with a single answer box has no letter and parentNumber null.
+- Examples: "Calculate the following" with 4 divisions -> 5a..5d. Each angle/triangle/shape to name -> 1a, 1b... A table to complete -> one sub-question per empty cell, in reading order (7a = cylinder name, 7b = cylinder faces...). Price-list questions a) and b) -> 9a, 9b.
+- Spelling lists to learn ("read, learn, cover, write"): ONE not_digital item for the whole list, with all the words in questionText. Not one item per word.
+- Dictionary/vocabulary tables (word, type, meaning): number the words 1, 2, 3... and give each word two sub-questions: "1a" = word class (short_text), "1b" = meaning (long_text), parentNumber "1", parentText = the word.
+- Keep printed numbering. When the sheet re-uses numbers (e.g. a second "1." later on the same paper), put them in a separate section, or prefix them (e.g. "B1") so numbers stay unique within a section.
 
 ## Question types (how the child answers)
 - number: the answer is a number, money amount, time or measurement.
@@ -54,7 +59,8 @@ The sheets are usually BLANK (not yet answered). If a child has written answers,
 - acceptableAnswers: other genuinely correct forms ("1540p", "15.40", "fifteen pounds forty").
 - markingCriteria: what to accept and how to give partial marks (e.g. "1 mark for correct word class, 1 mark for a sensible meaning").
 - workingSteps: 2-5 short child-friendly steps (UK methods: column method, bus stop division, partitioning).
-- marks: normally 1 per item; 2 for multi-step word problems or "type and meaning" vocabulary items; 0 for not_digital.
+- Division in Years 3-4: if it doesn't divide exactly, expectedAnswer uses a remainder ("24 r 4") and acceptableAnswers includes the decimal ("24.5").
+- marks: normally 1 per item; 2 for multi-step word problems; 0 for not_digital.
 - Double-check every calculation. Use UK spelling and terms.
 
 ## Honesty
@@ -150,19 +156,62 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 
 const normaliseTitle = (title: string) => title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
-/** Joins a section split across two chunks (same subject + title, adjacent). */
-function mergeAdjacentSections(sections: ExtractedSection[]): ExtractedSection[] {
+/** Main question number as an integer ("5a" -> 5, parentNumber "5" -> 5), or null. */
+function mainNumber(q: ExtractedQuestion): number | null {
+  const raw = q.parentNumber?.trim() || q.questionNumber.trim();
+  const match = raw.match(/^(\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
+const maxMain = (questions: ExtractedQuestion[]) =>
+  questions.reduce((max, q) => Math.max(max, mainNumber(q) ?? 0), 0);
+
+/** Shifts restarted numbering (1, 2, 3… again) so it continues after `offset`. */
+function shiftNumbering(questions: ExtractedQuestion[], offset: number): ExtractedQuestion[] {
+  const shift = (value: string) => value.replace(/^(\d+)/, (n) => String(Number(n) + offset));
+  return questions.map((q) => ({
+    ...q,
+    questionNumber: shift(q.questionNumber),
+    parentNumber: q.parentNumber ? shift(q.parentNumber) : q.parentNumber,
+  }));
+}
+
+/**
+ * Joins sections that were split across page-range chunks, in page order.
+ * A section is joined to the previous one when:
+ *  - it has the same subject and title, or
+ *  - it is the first section of a chunk, has the same subject, and its numbering
+ *    continues the previous section's (e.g. Q7 then Q8): the chunk couldn't see
+ *    the paper's title on an earlier page, so it guessed a different one.
+ * If the joined part restarts its numbering (a table continued on the next
+ * page), its numbers are shifted on so they stay unique.
+ */
+export function mergeChunks(chunks: ExtractedSection[][]): ExtractedSection[] {
   const merged: ExtractedSection[] = [];
-  for (const section of sections) {
-    const last = merged[merged.length - 1];
-    if (last && last.subject === section.subject && normaliseTitle(last.sectionTitle) === normaliseTitle(section.sectionTitle)) {
-      last.questions.push(...section.questions);
-      last.instructions = last.instructions ?? section.instructions;
-    } else {
-      merged.push({ ...section, questions: [...section.questions] });
-    }
-  }
+  chunks.forEach((sections, chunkIndex) => {
+    sections.forEach((section, sectionIndex) => {
+      const last = merged[merged.length - 1];
+      const firstMain = section.questions.map(mainNumber).find((n) => n !== null) ?? null;
+      const lastMain = last ? maxMain(last.questions) : 0;
+      const sameTitle = last && normaliseTitle(last.sectionTitle) === normaliseTitle(section.sectionTitle);
+      const continues = chunkIndex > 0 && sectionIndex === 0 && firstMain !== null && firstMain === lastMain + 1;
+
+      if (last && last.subject === section.subject && (sameTitle || continues)) {
+        const restarted = firstMain !== null && firstMain <= lastMain;
+        last.questions.push(...(restarted ? shiftNumbering(section.questions, lastMain) : section.questions));
+        last.instructions = last.instructions ?? section.instructions;
+      } else {
+        merged.push({ ...section, questions: [...section.questions] });
+      }
+    });
+  });
   return merged.filter((s) => s.questions.length > 0);
+}
+
+/** Pages (1..total) that produced no questions at all. */
+export function pagesWithoutQuestions(sections: ExtractedSection[], total: number): number[] {
+  const covered = new Set(sections.flatMap((s) => s.questions.map((q) => q.page)));
+  return Array.from({ length: total }, (_, i) => i + 1).filter((p) => !covered.has(p));
 }
 
 /** Converts Gemini output into the editor format (all new: no ids). */
@@ -235,9 +284,27 @@ export async function extractHomework(file: ValidatedImage, subjectHint: SetSubj
   const results = await mapLimit(ranges, MAX_PARALLEL, (range) =>
     extractChunk([filePart], chunkPrompt(range, pages, subjectHint))
   );
+  const chunks = results.map((r, i) => ({ from: ranges[i]?.from ?? 1, sections: r.sections }));
+
+  // Safety net: the model occasionally skips a whole page inside a chunk.
+  // Give each page that produced nothing one dedicated retry.
+  let retriedPages: number[] = [];
+  if (pages && ranges[0] !== null) {
+    retriedPages = pagesWithoutQuestions(results.flatMap((r) => r.sections), pages);
+    const retries = await mapLimit(retriedPages, MAX_PARALLEL, (page) =>
+      extractChunk([filePart], chunkPrompt({ from: page, to: page }, pages, subjectHint)).catch(() => null)
+    );
+    retries.forEach((r, i) => {
+      if (r) {
+        results.push(r);
+        chunks.push({ from: retriedPages[i], sections: r.sections.map((s) => ({ ...s, questions: s.questions.filter((q) => q.page === retriedPages[i]) })) });
+      }
+    });
+  }
+  chunks.sort((a, b) => a.from - b.from);
 
   const isHomework = results.some((r) => r.isHomework);
-  const allSections = mergeAdjacentSections(results.flatMap((r) => r.sections));
+  const allSections = mergeChunks(chunks.map((c) => c.sections));
   const sections = toEditorSections(allSections);
   const questionCount = sections.reduce((n, s) => n + s.questions.length, 0);
 
@@ -255,6 +322,7 @@ export async function extractHomework(file: ValidatedImage, subjectHint: SetSubj
     stats: {
       chunks: ranges.length,
       pages,
+      retriedPages,
       sections: sections.length,
       questions: questionCount,
       dropped: results.reduce((n, r) => n + r.dropped, 0),

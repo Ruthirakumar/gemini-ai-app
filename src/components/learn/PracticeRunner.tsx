@@ -5,8 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openOriginalFile } from "@/components/library/openOriginalFile";
 import { Button, ConfirmDialog, ErrorBanner, Pill } from "@/components/ui";
 import { ApiClientError, errorMessage, fetchJson } from "@/lib/client/fetchJson";
-import type { AttemptProgress, AttemptView, PracticeQuestionView } from "@/lib/learn/types";
+import { groupQuestions, partLabel, type QuestionGroup } from "@/lib/learn/grouping";
+import type { AttemptProgress, AttemptView, CheckView, PracticeQuestionView } from "@/lib/learn/types";
 import AnswerInput from "./AnswerInput";
+import CheckFeedback from "./CheckFeedback";
 
 interface Props {
   attempt: AttemptView;
@@ -15,21 +17,25 @@ interface Props {
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
-interface FlatQuestion {
-  question: PracticeQuestionView;
+/** One screen = one main question with all of its sub-questions. */
+interface Screen {
   sectionIndex: number;
+  group: QuestionGroup<PracticeQuestionView>;
 }
 
 const isAnswerable = (q: PracticeQuestionView) => q.questionType !== "not_digital";
 
 export default function PracticeRunner({ attempt, onMarked }: Props) {
-  const flat = useMemo<FlatQuestion[]>(
-    () => attempt.sections.flatMap((s, sectionIndex) => s.questions.map((question) => ({ question, sectionIndex }))),
+  const screens = useMemo<Screen[]>(
+    () => attempt.sections.flatMap((s, sectionIndex) => groupQuestions(s.questions).map((group) => ({ sectionIndex, group }))),
     [attempt.sections]
   );
+  const screenOf = useCallback(
+    (questionId: string | null) => Math.max(0, screens.findIndex((sc) => sc.group.parts.some((p) => p.id === questionId))),
+    [screens]
+  );
 
-  const initialIndex = Math.max(0, flat.findIndex((f) => f.question.id === attempt.progress.currentQuestionId));
-  const [index, setIndex] = useState(initialIndex);
+  const [index, setIndex] = useState(() => screenOf(attempt.progress.currentQuestionId));
   const [reviewing, setReviewing] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>(attempt.answers);
   const [submittedSections, setSubmittedSections] = useState<string[]>(attempt.progress.submittedSections);
@@ -37,16 +43,22 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [confirmHandIn, setConfirmHandIn] = useState(false);
   const [marking, setMarking] = useState(false);
+  const [checks, setChecks] = useState<Record<string, CheckView>>(attempt.checks);
+  const [checking, setChecking] = useState(false);
+  const [checkNotice, setCheckNotice] = useState<string | null>(null);
 
   const pending = useRef(new Map<string, string>());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const progressRef = useRef<AttemptProgress>(attempt.progress);
 
-  const current = flat[index];
+  const current = screens[index];
   const section = current ? attempt.sections[current.sectionIndex] : null;
-  const answerable = flat.filter((f) => isAnswerable(f.question));
-  const answeredCount = answerable.filter((f) => answers[f.question.id]?.trim()).length;
-  const unanswered = answerable.filter((f) => !answers[f.question.id]?.trim());
+  const allQuestions = attempt.sections.flatMap((s) => s.questions).filter(isAnswerable);
+  const answeredCount = allQuestions.filter((q) => answers[q.id]?.trim()).length;
+  const unanswered = screens
+    .map((sc, i) => ({ i, sc, missing: sc.group.parts.filter((p) => isAnswerable(p) && !answers[p.id]?.trim()).length }))
+    .filter((x) => x.missing > 0);
+  const unansweredCount = allQuestions.length - answeredCount;
 
   /** Saves pending answers and the current position. */
   const flush = useCallback(async () => {
@@ -98,24 +110,60 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
   }
 
   function goTo(nextIndex: number) {
-    const clamped = Math.min(Math.max(nextIndex, 0), flat.length - 1);
+    const clamped = Math.min(Math.max(nextIndex, 0), screens.length - 1);
     setIndex(clamped);
     setReviewing(false);
-    progressRef.current = { ...progressRef.current, currentQuestionId: flat[clamped]?.question.id ?? null };
+    setCheckNotice(null);
+    progressRef.current = { ...progressRef.current, currentQuestionId: screens[clamped]?.group.parts[0]?.id ?? null };
     void flush();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function finishSection() {
-    if (!section) return;
+    if (!section || !current) return;
     const next = submittedSections.includes(section.id) ? submittedSections : [...submittedSections, section.id];
     setSubmittedSections(next);
     progressRef.current = { ...progressRef.current, submittedSections: next };
-    const nextSectionStart = flat.findIndex((f) => f.sectionIndex === current.sectionIndex + 1);
+    const nextSectionStart = screens.findIndex((sc) => sc.sectionIndex === current.sectionIndex + 1);
     if (nextSectionStart >= 0) goTo(nextSectionStart);
     else {
       void flush();
       setReviewing(true);
+    }
+  }
+
+  const isLocked = (q: PracticeQuestionView) => {
+    const state = checks[q.id]?.state;
+    return state === "correct" || state === "revealed" || state === "needs_review";
+  };
+
+  /** Checks the answers on the current screen (one main question). */
+  async function checkScreen() {
+    if (!current) return;
+    const parts = current.group.parts.filter((p) => isAnswerable(p) && !isLocked(p));
+    const filled = parts.filter((p) => answers[p.id]?.trim());
+    if (filled.length === 0) {
+      setCheckNotice("Type an answer first, then check it.");
+      return;
+    }
+    setChecking(true);
+    setCheckNotice(null);
+    setError(null);
+    filled.forEach((p) => pending.current.delete(p.id)); // the check saves these answers
+    try {
+      const data = await fetchJson<{ checks: CheckView[] }>(`/api/learn/attempts/${attempt.id}/check`, {
+        method: "POST",
+        json: { answers: filled.map((p) => ({ questionId: p.id, answer: answers[p.id] })) },
+      });
+      setChecks((prev) => ({ ...prev, ...Object.fromEntries(data.checks.map((c) => [c.questionId, c])) }));
+      const left = parts.length - filled.length;
+      if (left > 0) setCheckNotice(`${left} part${left === 1 ? " is" : "s are"} still empty - have a go and check again.`);
+      void flush(); // saves position
+    } catch (err) {
+      filled.forEach((p) => pending.current.set(p.id, answers[p.id]));
+      setError(errorMessage(err));
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -161,10 +209,16 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
     );
   }
 
-  const percent = answerable.length ? Math.round((answeredCount / answerable.length) * 100) : 0;
-  const sectionQuestions = current ? flat.filter((f) => f.sectionIndex === current.sectionIndex) : [];
-  const isLastInSection = current && sectionQuestions[sectionQuestions.length - 1]?.question.id === current.question.id;
-  const showStem = current?.question.data.parentText && (index === 0 || flat[index - 1].question.data.parentNumber !== current.question.data.parentNumber || flat[index - 1].sectionIndex !== current.sectionIndex);
+  const percent = allQuestions.length ? Math.round((answeredCount / allQuestions.length) * 100) : 0;
+  const sectionScreens = current ? screens.filter((sc) => sc.sectionIndex === current.sectionIndex) : [];
+  const isLastInSection = current && sectionScreens[sectionScreens.length - 1] === current;
+  const group = current?.group;
+  const multi = (group?.parts.length ?? 0) > 1;
+  // One "open the worksheet" button per screen, at the first page any part refers to.
+  const visualPart = group?.parts.find((p) => p.data.visualReference);
+  const answerableParts = group?.parts.filter(isAnswerable) ?? [];
+  const canCheck = answerableParts.some((p) => !isLocked(p));
+  const screenDone = answerableParts.length > 0 && answerableParts.every(isLocked);
 
   return (
     <div className="space-y-5">
@@ -184,7 +238,7 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
         </div>
         <div className="mt-4">
           <div className="mb-1 flex justify-between text-sm font-medium text-slate-600">
-            <span>{answeredCount} of {answerable.length} answered</span>
+            <span>{answeredCount} of {allQuestions.length} answers done</span>
             <span>{percent}%</span>
           </div>
           <div className="h-3 overflow-hidden rounded-full bg-slate-100" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100} aria-label="Homework progress">
@@ -203,7 +257,7 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
                 key={s.id}
                 type="button"
                 aria-current={active ? "step" : undefined}
-                onClick={() => goTo(flat.findIndex((f) => f.sectionIndex === i))}
+                onClick={() => goTo(screens.findIndex((sc) => sc.sectionIndex === i))}
                 className={`shrink-0 rounded-xl px-3 py-2 text-left text-xs font-semibold transition-colors ${
                   active ? "bg-indigo-600 text-white" : finished ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                 }`}
@@ -231,22 +285,23 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
       {reviewing ? (
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-xl font-bold text-slate-900">Ready to hand in?</h2>
-          {unanswered.length === 0 ? (
+          {unansweredCount === 0 ? (
             <p className="mt-2 text-lg text-emerald-700">🎉 You&apos;ve answered every question!</p>
           ) : (
             <>
               <p className="mt-2 text-slate-700">
-                You still have <strong>{unanswered.length}</strong> question{unanswered.length === 1 ? "" : "s"} to answer. Tap one to go back to it:
+                You still have <strong>{unansweredCount}</strong> answer{unansweredCount === 1 ? "" : "s"} to fill in. Tap a question to go back to it:
               </p>
               <ul className="mt-3 flex flex-wrap gap-2">
-                {unanswered.map((f) => (
-                  <li key={f.question.id}>
+                {unanswered.map(({ i, sc, missing }) => (
+                  <li key={i}>
                     <button
                       type="button"
-                      onClick={() => goTo(flat.indexOf(f))}
+                      onClick={() => goTo(i)}
                       className="rounded-xl bg-amber-50 px-3 py-1.5 text-sm font-semibold text-amber-900 ring-1 ring-amber-200 hover:bg-amber-100"
                     >
-                      {attempt.sections[f.sectionIndex].sectionTitle.slice(0, 24)} · Q{f.question.questionNumber}
+                      {attempt.sections[sc.sectionIndex].sectionTitle.slice(0, 24)} · Q{sc.group.label}
+                      {sc.group.parts.length > 1 && <span className="font-normal"> ({missing} left)</span>}
                     </button>
                   </li>
                 ))}
@@ -254,13 +309,13 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
             </>
           )}
           <div className="mt-6 flex flex-wrap gap-3">
-            <Button size="lg" onClick={() => (unanswered.length ? setConfirmHandIn(true) : void handIn())}>
+            <Button size="lg" onClick={() => (unansweredCount ? setConfirmHandIn(true) : void handIn())}>
               Hand in my homework
             </Button>
             <Button size="lg" variant="secondary" onClick={() => goTo(index)}>Keep working</Button>
           </div>
         </div>
-      ) : current && section ? (
+      ) : current && section && group ? (
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
           <div className="flex flex-wrap items-center gap-2">
             <Pill tone="indigo">{section.subject}</Pill>
@@ -269,49 +324,93 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
           {section.instructions && (
             <p className="mt-3 whitespace-pre-line rounded-2xl bg-slate-50 px-4 py-3 text-slate-700">{section.instructions}</p>
           )}
-          {showStem && (
-            <p className="mt-3 whitespace-pre-line rounded-2xl bg-indigo-50/70 px-4 py-3 text-slate-800">{current.question.data.parentText}</p>
-          )}
 
+          {/* Main question: number + shared instruction/data */}
           <div className="mt-6 flex items-start gap-3">
-            <span className="grid h-10 min-w-10 shrink-0 place-items-center rounded-xl bg-indigo-600 px-2 text-base font-bold text-white">
-              {current.question.questionNumber}
+            <span className="grid h-11 min-w-11 shrink-0 place-items-center rounded-xl bg-indigo-600 px-2 text-lg font-bold text-white">
+              {group.label}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="whitespace-pre-line text-xl font-medium leading-relaxed text-slate-900">{current.question.questionText}</p>
-              {current.question.marks > 1 && <p className="mt-1 text-sm text-slate-500">{current.question.marks} marks</p>}
+              {multi ? (
+                group.stem && <p className="whitespace-pre-line text-xl font-medium leading-relaxed text-slate-900">{group.stem}</p>
+              ) : (
+                <>
+                  {group.stem && <p className="mb-2 whitespace-pre-line rounded-2xl bg-indigo-50/70 px-4 py-3 text-slate-800">{group.stem}</p>}
+                  <p className="whitespace-pre-line text-xl font-medium leading-relaxed text-slate-900">{group.parts[0].questionText}</p>
+                  {group.parts[0].marks > 1 && <p className="mt-1 text-sm text-slate-500">{group.parts[0].marks} marks</p>}
+                </>
+              )}
+              {multi && <p className="mt-1 text-sm text-slate-500">{group.parts.length} parts</p>}
             </div>
           </div>
 
-          {current.question.data.visualReference && (
+          {visualPart && (
             <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl bg-sky-50 px-4 py-3 text-sm text-sky-900 ring-1 ring-sky-200">
-              <span>🖼️ Look at the worksheet: {current.question.data.visualReference}</span>
+              <span>🖼️ This question uses a picture on your worksheet{visualPart.data.page ? ` (page ${visualPart.data.page})` : ""}.</span>
               {attempt.homework.hasFile && (
                 <Button
                   size="sm"
                   variant="secondary"
-                  onClick={() => openOriginalFile(attempt.homework.id, current.question.data.page).catch((e) => setError(errorMessage(e)))}
+                  onClick={() => openOriginalFile(attempt.homework.id, visualPart.data.page).catch((e) => setError(errorMessage(e)))}
                 >
-                  Open the worksheet{current.question.data.page ? ` (page ${current.question.data.page})` : ""}
+                  Open the worksheet
                 </Button>
               )}
             </div>
           )}
 
-          <div className="mt-6">
-            <AnswerInput
-              key={current.question.id}
-              question={current.question}
-              value={answers[current.question.id] ?? ""}
-              onChange={(v) => setAnswer(current.question.id, v)}
-            />
-          </div>
+          {/* Sub-questions (or the single answer box) */}
+          {multi ? (
+            <ol className="mt-6 space-y-4">
+              {group.parts.map((part, i) => (
+                <li key={part.id} className="rounded-2xl border border-slate-200 p-4">
+                  <div className="mb-3 flex items-start gap-3">
+                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-700">
+                      {partLabel(group, i, part)}
+                    </span>
+                    <div className="min-w-0 pt-0.5">
+                      <p className="whitespace-pre-line text-lg text-slate-900">{part.questionText}</p>
+                      {part.data.visualReference && <p className="mt-1 text-sm text-sky-800">Look at: {part.data.visualReference}</p>}
+                    </div>
+                  </div>
+                  <AnswerInput question={part} value={answers[part.id] ?? ""} onChange={(v) => setAnswer(part.id, v)} disabled={isLocked(part) || checking} />
+                  {checks[part.id] && <CheckFeedback check={checks[part.id]} />}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <div className="mt-6">
+              {group.parts[0].data.visualReference && (
+                <p className="mb-3 text-sm text-sky-800">Look at: {group.parts[0].data.visualReference}</p>
+              )}
+              <AnswerInput
+                key={group.parts[0].id}
+                question={group.parts[0]}
+                value={answers[group.parts[0].id] ?? ""}
+                onChange={(v) => setAnswer(group.parts[0].id, v)}
+                disabled={isLocked(group.parts[0]) || checking}
+              />
+              {checks[group.parts[0].id] && <CheckFeedback check={checks[group.parts[0].id]} />}
+            </div>
+          )}
+
+          {canCheck && (
+            <div className="mt-6 flex flex-col items-start gap-2">
+              <Button size="lg" variant="secondary" disabled={checking} onClick={() => void checkScreen()} className="!ring-2 !ring-indigo-300">
+                {checking ? "Checking…" : multi ? "✓ Check my answers" : "✓ Check my answer"}
+              </Button>
+              {checkNotice && <p className="text-sm font-medium text-amber-800" aria-live="polite">{checkNotice}</p>}
+            </div>
+          )}
+          {!canCheck && screenDone && (
+            <p className="mt-6 rounded-2xl bg-emerald-50 px-4 py-3 font-semibold text-emerald-900">🎉 All done on this question - press Next!</p>
+          )}
 
           <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-5">
             <Button size="lg" variant="secondary" disabled={index === 0} onClick={() => goTo(index - 1)}>
               ← Previous
             </Button>
-            <span className="text-sm text-slate-500">Question {index + 1} of {flat.length}</span>
+            <span className="text-sm text-slate-500">Question {index + 1} of {screens.length}</span>
             {isLastInSection ? (
               <Button size="lg" onClick={finishSection}>
                 {current.sectionIndex === attempt.sections.length - 1 ? "Finish & review" : "Finish section →"}
@@ -332,7 +431,7 @@ export default function PracticeRunner({ attempt, onMarked }: Props) {
         onConfirm={() => void handIn()}
         onCancel={() => setConfirmHandIn(false)}
       >
-        You haven&apos;t answered {unanswered.length} question{unanswered.length === 1 ? "" : "s"}. They&apos;ll be marked as not answered. You can still go back and answer them first.
+        You haven&apos;t filled in {unansweredCount} answer{unansweredCount === 1 ? "" : "s"}. They&apos;ll be marked as not answered. You can still go back and answer them first.
       </ConfirmDialog>
     </div>
   );

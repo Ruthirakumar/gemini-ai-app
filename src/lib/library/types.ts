@@ -126,7 +126,7 @@ export interface HomeworkSetDetail extends HomeworkSetSummary {
 /* ------------------------------------------------------------------ */
 
 export const extractedQuestionSchema = z.object({
-  questionNumber: z.string().describe("Numbering as printed, with subpart letters, e.g. '1a', '9b', '15q'. Unnumbered items: number in order."),
+  questionNumber: z.string().describe("Main number plus a letter for sub-questions, e.g. '5a', '9b', '15q'; just the number for single questions."),
   page: z.number().int().describe("Page of the document this question is on, starting at 1."),
   parentNumber: z.string().nullable().describe("For subparts, the main question number (e.g. '9'). null otherwise."),
   parentText: z.string().nullable().describe("For subparts: the shared question stem/data they all use (price list, word box, passage). null otherwise."),

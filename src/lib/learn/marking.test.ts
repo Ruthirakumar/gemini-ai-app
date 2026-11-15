@@ -21,14 +21,16 @@ function question(
   };
 }
 
-const mark = (over: Partial<Parameters<typeof sanitiseModelMark>[2] & object> = {}) => ({
+type ModelMark = NonNullable<Parameters<typeof sanitiseModelMark>[2]>;
+const mark = (over: Partial<ModelMark> = {}): ModelMark => ({
   ref: "r1",
-  status: "correct" as const,
+  status: "correct",
   awardedMarks: 1,
   correctAnswer: "x",
   feedback: "The student did well",
   explanation: "e",
   workingSteps: [],
+  hint: null,
   ...over,
 });
 
@@ -83,6 +85,13 @@ describe("sanitiseModelMark", () => {
     const out = sanitiseModelMark(question("short_text", "a"), "b", mark({ status: "partially_correct", awardedMarks: 1 }));
     assert.equal(out.status, "incorrect");
     assert.equal(out.awardedMarks, 0);
+  });
+
+  it("keeps a helpful hint but drops one that gives the answer away", () => {
+    const q = question("number", "25");
+    const wrong = { status: "incorrect" as const, correctAnswer: "25" };
+    assert.equal(sanitiseModelMark(q, "20", mark({ ...wrong, hint: "What is 5 x 5?" })).hint, "What is 5 x 5?");
+    assert.equal(sanitiseModelMark(q, "20", mark({ ...wrong, hint: "The answer is 25." })).hint, null);
   });
 
   it("flags missing model results for review and rewrites to second person", () => {

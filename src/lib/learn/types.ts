@@ -42,6 +42,28 @@ export const attemptProgressSchema = z.object({
 });
 export type AttemptProgress = z.infer<typeof attemptProgressSchema>;
 
+/** Check-as-you-go: tries per question before the answer is shown. */
+export const MAX_CHECK_TRIES = 3;
+
+export type CheckState = "correct" | "try_again" | "revealed" | "needs_review";
+
+/** What the child sees after checking a question. Answers appear only when correct or revealed. */
+export interface CheckView {
+  questionId: string;
+  state: CheckState;
+  feedback: string;
+  hint: string | null;
+  triesUsed: number;
+  triesLeft: number;
+  correctAnswer: string | null;
+  explanation: string | null;
+  workingSteps: string[];
+}
+
+export const checkRequestSchema = z.object({
+  answers: z.array(z.object({ questionId: z.uuid(), answer: z.string().max(2000) })).min(1).max(60),
+});
+
 export interface QuestionResult {
   questionId: string;
   status: MarkingStatus;
@@ -52,6 +74,10 @@ export interface QuestionResult {
   feedback: string | null;
   explanation: string | null;
   workingSteps: string[];
+  /** Wrong on the first check but put right afterwards. */
+  corrected: boolean;
+  /** How many times the child checked this question before handing in. */
+  triesUsed: number;
 }
 
 export interface ResultCounts {
@@ -86,6 +112,8 @@ export interface AttemptView {
   progress: AttemptProgress;
   startedAt: string;
   submittedAt: string | null;
+  /** Check-as-you-go results so far (in-progress attempts). */
+  checks: Record<string, CheckView>;
   /** Present only once marked. */
   results: Record<string, QuestionResult> | null;
   score: AttemptScore | null;

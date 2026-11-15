@@ -6,6 +6,7 @@ import { useState } from "react";
 import PracticeQuestion from "@/components/homework/PracticeQuestion";
 import { Button, ErrorBanner, Pill } from "@/components/ui";
 import { errorMessage, fetchJson } from "@/lib/client/fetchJson";
+import { groupQuestions, partLabel } from "@/lib/learn/grouping";
 import type { PublicPracticeQuestion } from "@/lib/homework/types";
 import type { AttemptView, MarkingStatus, PracticeQuestionView, QuestionResult } from "@/lib/learn/types";
 import { SECTION_SUBJECTS } from "@/lib/library/types";
@@ -61,7 +62,19 @@ function SimilarPractice({ attemptId, questionId }: { attemptId: string; questio
   );
 }
 
-function ResultCard({ q, result, attemptId }: { q: PracticeQuestionView; result: QuestionResult | undefined; attemptId: string }) {
+function ResultCard({
+  q,
+  result,
+  attemptId,
+  label = q.questionNumber,
+  inGroup = false,
+}: {
+  q: PracticeQuestionView;
+  result: QuestionResult | undefined;
+  attemptId: string;
+  label?: string;
+  inGroup?: boolean;
+}) {
   if (q.questionType === "not_digital") {
     return (
       <article className="rounded-2xl border border-l-4 border-slate-200 border-l-sky-300 bg-white p-4">
@@ -79,14 +92,15 @@ function ResultCard({ q, result, attemptId }: { q: PracticeQuestionView; result:
     <article className={`rounded-2xl border border-l-4 border-slate-200 bg-white p-4 shadow-sm sm:p-5 ${s.border}`}>
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <span className="grid h-9 min-w-9 shrink-0 place-items-center rounded-xl bg-slate-100 px-2 text-sm font-bold text-slate-700">{q.questionNumber}</span>
+          <span className={`grid h-9 min-w-9 shrink-0 place-items-center px-2 text-sm font-bold ${inGroup ? "rounded-full bg-indigo-100 text-indigo-700" : "rounded-xl bg-slate-100 text-slate-700"}`}>{label}</span>
           <div className="min-w-0">
-            {q.data.parentText && <p className="text-sm text-slate-500 line-clamp-2">{q.data.parentText}</p>}
+            {!inGroup && q.data.parentText && <p className="text-sm text-slate-500 line-clamp-2">{q.data.parentText}</p>}
             <h4 className="whitespace-pre-line break-words text-base font-semibold text-slate-900 sm:text-lg">{q.questionText}</h4>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Pill tone={s.tone}>{s.icon} {s.label}</Pill>
+          {result.corrected && <Pill tone="green">Fixed it! ✓</Pill>}
           <span className="text-sm font-semibold text-slate-600">{result.status === "needs_review" ? "–" : result.awardedMarks}/{result.marks}</span>
         </div>
       </header>
@@ -142,6 +156,7 @@ export default function AttemptResults({ attempt }: { attempt: AttemptView }) {
   const results = attempt.results ?? {};
   const score = attempt.score;
   const pct = score?.percentage ?? null;
+  const fixedCount = Object.values(results).filter((r) => r.corrected).length;
 
   const headline =
     pct === null ? "All handed in!" : pct >= 90 ? "Amazing work! 🌟" : pct >= 70 ? "Great job! 🎉" : pct >= 40 ? "Good effort! 💪" : "Good try - let's learn together! 📚";
@@ -191,6 +206,7 @@ export default function AttemptResults({ attempt }: { attempt: AttemptView }) {
             <p className="mt-2 text-slate-600">
               {attempt.student.displayName}, you scored <strong>{score?.score ?? 0}</strong> out of <strong>{score?.totalMarks ?? 0}</strong> marks.
               {score && score.counts.needs_review > 0 && " A grown-up will check the questions marked “needs checking”."}
+              {fixedCount > 0 && ` You fixed ${fixedCount} answer${fixedCount === 1 ? "" : "s"} after checking - brilliant! (Scores count your first try.)`}
             </p>
           </div>
         </div>
@@ -264,9 +280,32 @@ export default function AttemptResults({ attempt }: { attempt: AttemptView }) {
                       ({sr.reduce((n, r) => n + (r.status === "needs_review" ? 0 : r.awardedMarks), 0)}/{sr.reduce((n, r) => n + (r.status === "needs_review" ? 0 : r.marks), 0)})
                     </span>
                   </h3>
-                  {questions.map((q) => (
-                    <ResultCard key={q.id} q={q} result={results[q.id]} attemptId={attempt.id} />
-                  ))}
+                  {groupQuestions(section.questions).map((group) => {
+                    const shown = group.parts.filter(visible);
+                    if (shown.length === 0) return null;
+                    if (group.parts.length === 1) {
+                      return <ResultCard key={group.parts[0].id} q={group.parts[0]} result={results[group.parts[0].id]} attemptId={attempt.id} />;
+                    }
+                    const gr = group.parts.map((p) => results[p.id]).filter(Boolean);
+                    const got = gr.reduce((n, r) => n + (r.status === "needs_review" ? 0 : r.awardedMarks), 0);
+                    const out = gr.reduce((n, r) => n + (r.status === "needs_review" ? 0 : r.marks), 0);
+                    return (
+                      <div key={group.parts[0].id} className="rounded-3xl bg-slate-100/70 p-3 sm:p-4">
+                        <div className="mb-3 flex items-start gap-3 px-1">
+                          <span className="grid h-9 min-w-9 shrink-0 place-items-center rounded-xl bg-indigo-600 px-2 text-sm font-bold text-white">{group.label}</span>
+                          <p className="min-w-0 flex-1 whitespace-pre-line font-semibold text-slate-900">{group.stem ?? `Question ${group.label}`}</p>
+                          {out > 0 && <span className="shrink-0 text-sm font-semibold text-slate-600">{got}/{out}</span>}
+                        </div>
+                        <div className="space-y-3">
+                          {group.parts.map((part, i) =>
+                            visible(part) ? (
+                              <ResultCard key={part.id} q={part} result={results[part.id]} attemptId={attempt.id} label={partLabel(group, i, part)} inGroup />
+                            ) : null
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}

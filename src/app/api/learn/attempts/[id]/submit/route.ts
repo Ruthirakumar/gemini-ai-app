@@ -3,7 +3,7 @@ import { assertUuid, ok, readJson, route } from "@/lib/api";
 import { HomeworkError } from "@/lib/homework/errors";
 import { computeScore, markAnswers } from "@/lib/learn/marking";
 import { getAttemptView, getOwnedAttempt, loadMarkableQuestions } from "@/lib/learn/repository";
-import { saveAnswersSchema } from "@/lib/learn/types";
+import { MarkingStatus, saveAnswersSchema } from "@/lib/learn/types";
 import { dbError } from "@/lib/library/repository";
 import { createSupabaseAdminClient, requireUser } from "@/lib/supabase/server";
 
@@ -32,8 +32,11 @@ export const POST = route(
 
     // 2. Save any final answers sent with the submission (while still in progress).
     if (attempt.status === "in_progress" && body.answers?.length) {
+      const { data: lockedRows } = await supabase.from("student_answers").select("question_id").eq("attempt_id", id).eq("locked", true);
+      const locked = new Set((lockedRows ?? []).map((r) => r.question_id as string));
+      const finalAnswers = body.answers.filter((a) => !locked.has(a.questionId));
       const { error } = await supabase.from("student_answers").upsert(
-        body.answers.map((a) => ({
+        finalAnswers.map((a) => ({
           attempt_id: id,
           question_id: a.questionId,
           student_answer: a.answer.trim() ? a.answer : null,
@@ -85,15 +88,33 @@ export const POST = route(
       const questions = await loadMarkableQuestions(admin, attempt.homework_set_id);
       const { data: answerRows, error: answersError } = await admin
         .from("student_answers")
-        .select("question_id, student_answer")
+        .select("question_id, student_answer, check_count, first_status, first_marks")
         .eq("attempt_id", id);
       if (answersError) dbError("loadAnswers", answersError);
       const answers = new Map<string, string>(
         (answerRows ?? []).filter((r) => r.student_answer).map((r) => [r.question_id as string, r.student_answer as string])
       );
+      // Questions checked while practising are scored on their first try.
+      const firstTries = new Map(
+        (answerRows ?? [])
+          .filter((r) => r.check_count > 0 && r.first_status)
+          .map((r) => [r.question_id as string, { status: r.first_status as MarkingStatus, marks: (r.first_marks as number | null) ?? 0, tries: r.check_count as number }])
+      );
 
       // 5-6. Mark (deterministic first, Gemini for the rest; validated).
-      const outcomes = await markAnswers(questions, answers);
+      // Marking the latest answers gives the explanations; for checked
+      // questions the score then comes from the first try.
+      const marksById = new Map(questions.map((q) => [q.id, q.marks]));
+      const outcomes = (await markAnswers(questions, answers)).map((o) => {
+        const first = firstTries.get(o.questionId);
+        if (!first) return { ...o, corrected: false };
+        return {
+          ...o,
+          status: first.status,
+          awardedMarks: Math.min(Math.max(first.marks, 0), marksById.get(o.questionId) ?? 0),
+          corrected: o.status === "correct" && first.status !== "correct",
+        };
+      });
 
       // 7. Save individual results (upsert: re-marking never duplicates rows).
       if (outcomes.length > 0) {
@@ -108,6 +129,9 @@ export const POST = route(
             feedback: o.feedback,
             explanation: o.explanation,
             working_steps: o.workingSteps,
+            corrected: o.corrected,
+            hint: null,
+            locked: true,
           })),
           { onConflict: "attempt_id,question_id" }
         );
@@ -115,7 +139,6 @@ export const POST = route(
       }
 
       // 8. Score computed here, never trusted from the model or the browser.
-      const marksById = new Map(questions.map((q) => [q.id, q.marks]));
       const score = computeScore(outcomes, outcomes.map((o) => marksById.get(o.questionId) ?? 0));
 
       const { error: finishError } = await admin

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { gemini, GEMINI_MODEL, withGeminiRetry } from "@/lib/gemini";
-import { compareAnswers, normaliseText } from "@/lib/homework/answerCompare";
+import { compareAnswers, revealsAnswer } from "@/lib/homework/answerCompare";
 import { MAX_PRACTICE_ATTEMPTS } from "@/lib/homework/constants";
 import { HomeworkError, toErrorResponse } from "@/lib/homework/errors";
 import { openPracticeToken } from "@/lib/homework/practiceToken";
@@ -29,12 +29,7 @@ const praise = (attempt: number) => PRAISE[(attempt - 1) % PRAISE.length];
 
 /** True if a hint/feedback would give away the answer. */
 function leaksAnswer(text: string | null, payload: PracticeTokenPayload): boolean {
-  if (!text) return false;
-  const haystack = ` ${normaliseText(text).replace(/[^a-z0-9./ ]/g, " ")} `;
-  return [payload.expectedAnswer, ...payload.acceptableAnswers].some((answer) => {
-    const needle = normaliseText(answer).replace(/[^a-z0-9./ ]/g, " ").trim();
-    return needle.length > 0 && haystack.includes(` ${needle} `);
-  });
+  return revealsAnswer(text, [payload.expectedAnswer, ...payload.acceptableAnswers]);
 }
 
 /** Fallback hints if Gemini is unavailable, getting more concrete each attempt. */
